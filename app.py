@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import pandas as pd
 import os
 import json
+from datetime import datetime
 from ahp_backend import *
 
 st.set_page_config(page_title="COPP AHP Military Planner", layout="wide")
@@ -38,6 +39,199 @@ def load_ahp_team():
 def save_ahp_team(team_data):
     with open(AHP_TEAM_FILE, "w") as f:
         json.dump(team_data, f, indent=2)
+
+def load_independent_project(project, force):
+    """Load independent force data (completely separate from control data)"""
+    try:
+        independent_file = f"{project}_{force}_independent.json"
+        
+        if os.path.exists(independent_file):
+            # Load the complete independent data
+            with open(independent_file, "r") as f:
+                independent_data = json.load(f)
+            
+            # Ensure we have the complete structure by merging with base data if needed
+            base_data = load_project(project, force)
+            
+            # Preserve independent progress but ensure we have all structural data
+            merged_data = base_data.copy()
+            
+            # Update with independent task progress
+            if "tasks" in independent_data and "tasks" in merged_data:
+                for i, base_task in enumerate(merged_data["tasks"]):
+                    # Find matching task in independent data
+                    for ind_task in independent_data.get("tasks", []):
+                        if (base_task.get("description") == ind_task.get("description") and
+                            base_task.get("Name") == ind_task.get("Name")):
+                            # Update with independent progress values
+                            base_task.update({
+                                "progress": ind_task.get("progress", 0),
+                                "Progress": ind_task.get("Progress", 0),
+                                "Actual Progress": ind_task.get("Actual Progress", 0),
+                                "achieved": ind_task.get("achieved", 0),
+                                "Achieved %": ind_task.get("Achieved %", 0),
+                                "Progress %": ind_task.get("Progress %", 0),
+                                "Intangible": ind_task.get("Intangible", "nil")
+                            })
+                            break
+            
+            return merged_data
+        else:
+            # First time - create independent copy from base structure
+            base_data = load_project(project, force)
+            independent_data = base_data.copy()
+            
+            # Reset only progress-related fields to start fresh, keep all structure
+            if "tasks" in independent_data:
+                for task in independent_data["tasks"]:
+                    # Reset progress fields to 0 for independent tracking
+                    task["progress"] = 0
+                    task["Progress"] = 0
+                    task["Actual Progress"] = 0
+                    task["achieved"] = 0
+                    task["Achieved %"] = 0
+                    task["Progress %"] = 0
+                    task["Intangible"] = "nil"
+                    # Keep all other fields including weights, descriptions, DPs, etc.
+            
+            # Save this initial independent version
+            save_independent_project(project, force, independent_data)
+            return independent_data
+            
+    except Exception as e:
+        st.error(f"Error loading independent data: {str(e)}")
+        # Fallback to base data but reset progress
+        base_data = load_project(project, force)
+        if "tasks" in base_data:
+            for task in base_data["tasks"]:
+                task["progress"] = 0
+                task["Progress"] = 0
+                task["Actual Progress"] = 0
+                task["achieved"] = 0
+                task["Achieved %"] = 0
+                task["Progress %"] = 0
+                task["Intangible"] = "nil"
+        return base_data
+
+def save_independent_project(project, force, data):
+    """Save complete independent force data (completely separate from control data)"""
+    try:
+        independent_file = f"{project}_{force}_independent.json"
+        
+        # Save the complete data structure for full independence
+        with open(independent_file, "w") as f:
+            json.dump(data, f, indent=2)
+            
+    except Exception as e:
+        st.error(f"Error saving independent data: {str(e)}")
+
+def load_theater_config(project):
+    """Load theater configurations for the project"""
+    try:
+        theater_file = f"{project}_theaters.json"
+        if os.path.exists(theater_file):
+            with open(theater_file, "r") as f:
+                config = json.load(f)
+                
+                # Ensure all available forces are either in theaters or unassigned
+                available_forces = get_available_forces(project)
+                assigned_forces = [force for theater in config["theaters"].values() for force in theater["forces"]]
+                
+                # Add any new forces to unassigned list
+                for force in available_forces:
+                    if force not in assigned_forces and force not in config.get("unassigned_forces", []):
+                        config.setdefault("unassigned_forces", []).append(force)
+                
+                # Remove forces that no longer exist
+                config["unassigned_forces"] = [f for f in config.get("unassigned_forces", []) if f in available_forces]
+                
+                return config
+        else:
+            # Default theater structure with all available forces as unassigned
+            available_forces = get_available_forces(project)
+            return {
+                "theaters": {},
+                "unassigned_forces": available_forces
+            }
+    except Exception as e:
+        st.error(f"Error loading theater config: {str(e)}")
+        return {"theaters": {}, "unassigned_forces": []}
+
+def save_theater_config(project, theater_config):
+    """Save theater configurations for the project"""
+    try:
+        theater_file = f"{project}_theaters.json"
+        with open(theater_file, "w") as f:
+            json.dump(theater_config, f, indent=2)
+    except Exception as e:
+        st.error(f"Error saving theater config: {str(e)}")
+
+def get_available_forces(project):
+    """Get list of available forces from the global SIDES list"""
+    global SIDES
+    if not SIDES:
+        SIDES = load_forces()  # Reload if needed
+    return SIDES.copy()  # Return a copy of the forces list
+
+def calculate_theater_progress(project, theater_forces):
+    """Calculate average objective progress for forces in the theater from Control's perspective"""
+    if not theater_forces:
+        return 0
+    
+    total_progress = 0
+    valid_forces = 0
+    
+    for force in theater_forces:
+        try:
+            # Load the Control's data for this specific force (not independent data)
+            force_data = load_project(project, force)
+            
+            if not force_data:
+                continue
+                
+            # Use compute_progress to get calculated progress values (same as Control dashboard)
+            progress = compute_progress(force_data)
+            
+            if progress and "objective" in progress:
+                obj_progress_dict = progress["objective"]
+                if obj_progress_dict:
+                    # Calculate average objective progress for this force
+                    obj_progress_values = list(obj_progress_dict.values())
+                    if obj_progress_values:
+                        force_obj_progress = sum(obj_progress_values) / len(obj_progress_values)
+                        total_progress += force_obj_progress
+                        valid_forces += 1
+                    
+        except Exception as e:
+            st.error(f"Error calculating progress for force {force}: {str(e)}")
+            continue
+    
+    # Return average objective progress across all forces in the theater
+    return total_progress / valid_forces if valid_forces > 0 else 0
+
+def sort_dps_numerically(dps):
+    """Sort DPs numerically by DP No"""
+    return sorted(dps, key=lambda dp: int(dp.get('DP No', 0)) if str(dp.get('DP No', '')).isdigit() else float('inf'))
+
+def sort_phases_numerically(phases):
+    """Sort phases numerically by Phase No"""
+    return sorted(phases, key=lambda phase: int(phase.get('Phase No', 0)) if str(phase.get('Phase No', '')).isdigit() else float('inf'))
+
+def sort_objectives_numerically(objectives):
+    """Sort objectives numerically by Objective No"""
+    return sorted(objectives, key=lambda obj: int(obj.get('Objective No', 0)) if str(obj.get('Objective No', '')).isdigit() else float('inf'))
+
+def sort_tasks_numerically(tasks):
+    """Sort tasks numerically by Task No"""
+    return sorted(tasks, key=lambda task: int(task.get('Task No', 0)) if str(task.get('Task No', '')).isdigit() else float('inf'))
+
+def get_numeric_sort_key(item, field_name):
+    """Generic function to get numeric sort key for any field"""
+    value = item.get(field_name, 0)
+    try:
+        return int(value) if str(value).isdigit() else float('inf')
+    except:
+        return float('inf')
 
 SIDES = load_forces()
 FORCE_COLORS = {
@@ -768,6 +962,7 @@ def sidebar():
             "📈 Dashboard": "Dashboard",
             "⚙️ Control Panel": "Control Panel",
             "👥 Force Manager": "Force Manager",
+            "🏛️ Theater Command": "Theater Command",
             "🗂️ Project Management": "Project Management",
             "🚪 Logout": "Logout"
         }
@@ -778,7 +973,9 @@ def sidebar():
             "📍 Decisive Points": "Decisive Points", 
             "✅ Tasks": "Tasks",
             "⚖️ KO Method": "KO Method",
-            "🗂️ Project Management": "Project Management",
+            "� Force Progress Entry": "Force Progress Entry",
+            "📈 Force Dashboard": "Force Dashboard",
+            "�🗂️ Project Management": "Project Management",
             "🚪 Logout": "Logout"
         }
     
@@ -876,11 +1073,11 @@ def project_management():
             data = load_project(selected, side)
             st.subheader(f"{side.capitalize()} Data")
             st.write("Phases:")
-            st.table(data.get("phases", []))
+            st.table(sort_phases_numerically(data.get("phases", [])))
             st.write("Objectives:")
-            st.table(data.get("objectives", []))
+            st.table(sort_objectives_numerically(data.get("objectives", [])))
             st.write("DPs:")
-            st.table(data.get("dps", []))
+            st.table(sort_dps_numerically(data.get("dps", [])))
             st.write("Tasks:")
             st.table(data.get("tasks", []))
     # Removed stray/incorrectly indented lines from summary display loop
@@ -920,15 +1117,20 @@ def objectives_tab():
                 data = load_project(project, force)
                 objectives = data.get("objectives", [])
                 
-                # Display current objectives
+                # Display current objectives in sequential order
                 st.subheader(f"{force.capitalize()} Force Objectives")
+                
+                # Sort objectives numerically
+                sorted_objectives = sort_objectives_numerically(objectives)
+                
                 objective_data = []
-                for obj_idx, obj in enumerate(objectives):
+                for obj_idx, obj in enumerate(sorted_objectives):
                     name = obj.get("Name") or obj.get("Objective") or f"Objective {obj_idx+1}"
                     phase = obj.get("Phase") or obj.get("phase") or ""
+                    obj_no = obj.get("Objective No", obj_idx + 1)
                     
                     objective_data.append({
-                        "No": obj_idx + 1,
+                        "No": obj_no,
                         "Objective": str(name).strip(),
                         "Phase": str(phase).strip()
                     })
@@ -955,6 +1157,8 @@ def objectives_tab():
                         if "objectives" not in data:
                             data["objectives"] = []
                         data["objectives"].append({"Name": new_name, "Phase": new_phase})
+                        # Sort objectives after adding to maintain sequential order
+                        data["objectives"] = sort_objectives_numerically(data["objectives"])
                         save_project(project, force, data)
                         st.success(f"✅ Objective '{new_name}' added to {force} force")
                         st.rerun()
@@ -962,9 +1166,15 @@ def objectives_tab():
                 with col_delete:
                     st.markdown("**🗑️ Delete Objective**")
                     if objectives:
-                        obj_options = [f"{i+1}. {obj.get('Name', 'Unnamed')}" for i, obj in enumerate(objectives)]
-                        selected_obj_idx = st.selectbox("Select Objective", range(len(objectives)), 
+                        # Sort objectives and create mapping for deletion
+                        sorted_objectives = sort_objectives_numerically(objectives)
+                        obj_to_original_idx = {id(obj): objectives.index(obj) for obj in objectives}
+                        
+                        obj_options = [f"{obj.get('Objective No', i+1)}. {obj.get('Name', 'Unnamed')}" for i, obj in enumerate(sorted_objectives)]
+                        selected_sorted_idx = st.selectbox("Select Objective", range(len(sorted_objectives)), 
                                                        format_func=lambda x: obj_options[x], key=f"del_obj_{force}")
+                        selected_obj = sorted_objectives[selected_sorted_idx]
+                        selected_obj_idx = obj_to_original_idx[id(selected_obj)]
                         
                         if st.button(f"🗑️ Delete from {force.capitalize()}", type="secondary", key=f"delete_obj_{force}"):
                             obj_name = objectives[selected_obj_idx].get("Name")
@@ -1017,6 +1227,8 @@ def objectives_tab():
                 if "objectives" not in data:
                     data["objectives"] = []
                 data["objectives"].append({"Name": name, "Phase": phase})
+                # Sort objectives after adding to maintain sequential order
+                data["objectives"] = sort_objectives_numerically(data["objectives"])
                 save_project(project, side, data)
                 st.success(f"✅ Objective '{name}' added")
                 st.rerun()
@@ -1055,11 +1267,15 @@ def phases_tab():
                 data = load_project(project, force)
                 phases = data.get("phases", [])
                 
-                # Display current phases
+                # Display current phases in sequential order
                 st.subheader(f"{force.capitalize()} Force Phases")
+                
+                # Sort phases appropriately
+                sorted_phases = sort_phases_numerically(phases)
+                
                 df = pd.DataFrame({
-                    "No": [phase_idx + 1 for phase_idx in range(len(phases))],
-                    "Phase Name": [p.get("Name") or p.get("Phase") for p in phases]
+                    "No": [phase.get("Phase No", idx + 1) for idx, phase in enumerate(sorted_phases)],
+                    "Phase Name": [p.get("Name") or p.get("Phase") for p in sorted_phases]
                 })
                 
                 display_force_table(df, use_container_width=True, force_type=force)
@@ -1076,6 +1292,8 @@ def phases_tab():
                         if "phases" not in data:
                             data["phases"] = []
                         data["phases"].append({"Name": new_name})
+                        # Sort phases after adding to maintain sequential order
+                        data["phases"] = sort_phases_numerically(data["phases"])
                         save_project(project, force, data)
                         st.success(f"✅ Phase '{new_name}' added to {force} force")
                         st.rerun()
@@ -1083,9 +1301,15 @@ def phases_tab():
                 with col_delete:
                     st.markdown("**🗑️ Delete Phase**")
                     if phases:
-                        phase_options = [f"{i+1}. {phase.get('Name', 'Unnamed')}" for i, phase in enumerate(phases)]
-                        selected_phase_idx = st.selectbox("Select Phase", range(len(phases)), 
+                        # Sort phases and create mapping for deletion
+                        sorted_phases = sort_phases_numerically(phases)
+                        phase_to_original_idx = {id(phase): phases.index(phase) for phase in phases}
+                        
+                        phase_options = [f"{phase.get('Phase No', i+1)}. {phase.get('Name', 'Unnamed')}" for i, phase in enumerate(sorted_phases)]
+                        selected_sorted_idx = st.selectbox("Select Phase", range(len(sorted_phases)), 
                                                          format_func=lambda x: phase_options[x], key=f"del_phase_{force}")
+                        selected_phase = sorted_phases[selected_sorted_idx]
+                        selected_phase_idx = phase_to_original_idx[id(selected_phase)]
                         
                         if st.button(f"🗑️ Delete from {force.capitalize()}", type="secondary", key=f"delete_phase_{force}"):
                             phase_name = phases[selected_phase_idx].get("Name")
@@ -1124,6 +1348,8 @@ def phases_tab():
                 if "phases" not in data:
                     data["phases"] = []
                 data["phases"].append({"Name": name})
+                # Sort phases after adding to maintain sequential order
+                data["phases"] = sort_phases_numerically(data["phases"])
                 save_project(project, side, data)
                 st.success(f"✅ Phase '{name}' added")
                 st.rerun()
@@ -1163,7 +1389,7 @@ def dps_tab():
                 objectives = data.get("objectives", [])
                 phases = data.get("phases", [])
                 
-                # Display current DPs
+                # Display current DPs (already sorted in data)
                 st.subheader(f"{force.capitalize()} Force DPs")
                 if dps:
                     dp_data = []
@@ -1232,6 +1458,8 @@ def dps_tab():
                             "Weight": new_weight,
                             "Force Group": new_force_group
                         })
+                        # Sort DPs after adding to maintain sequential order
+                        data["dps"] = sort_dps_numerically(data["dps"])
                         save_project(project, force, data)
                         st.success(f"✅ DP '{new_dp_name}' added to {force} force")
                         st.rerun()
@@ -1239,9 +1467,14 @@ def dps_tab():
                 with col_delete:
                     st.markdown("**🗑️ Delete DP**")
                     if dps:
-                        dp_options = [f"DP {dp.get('DP No', 'N/A')}: {dp.get('Name', 'Unnamed')}" for dp in dps]
-                        selected_dp_idx = st.selectbox("Select DP", range(len(dps)), 
+                        # Sort DPs numerically by DP No for display
+                        sorted_dps = sorted(enumerate(dps), key=lambda x: int(x[1].get('DP No', 0)) if str(x[1].get('DP No', '')).isdigit() else float('inf'))
+                        dp_options = [f"DP {dps[original_idx].get('DP No', 'N/A')}: {dps[original_idx].get('Name', 'Unnamed')}" for original_idx, dp in sorted_dps]
+                        sorted_indices = [original_idx for original_idx, dp in sorted_dps]
+                        
+                        selected_sorted_idx = st.selectbox("Select DP", range(len(sorted_dps)), 
                                                       format_func=lambda x: dp_options[x], key=f"del_dp_{force}")
+                        selected_dp_idx = sorted_indices[selected_sorted_idx]
                         
                         if st.button(f"🗑️ Delete from {force.capitalize()}", type="secondary", key=f"delete_dp_{force}"):
                             dp_to_delete = dps[selected_dp_idx]
@@ -1335,6 +1568,8 @@ def dps_tab():
                     "Weight": weight,
                     "Force Group": force_group
                 })
+                # Sort DPs after adding to maintain sequential order
+                data["dps"] = sort_dps_numerically(data["dps"])
                 save_project(project, side, data)
                 st.success(f"✅ DP '{dp_name}' added")
                 st.rerun()
@@ -1342,9 +1577,14 @@ def dps_tab():
         with col_delete:
             st.markdown("**🗑️ Delete DP**")
             if dps:
-                dp_options = [f"DP {dp.get('DP No', 'N/A')}: {dp.get('Name', 'Unnamed')}" for dp in dps]
-                selected_dp_idx = st.selectbox("Select DP", range(len(dps)), 
+                # Sort DPs numerically by DP No for display
+                sorted_dps = sorted(enumerate(dps), key=lambda x: int(x[1].get('DP No', 0)) if str(x[1].get('DP No', '')).isdigit() else float('inf'))
+                dp_options = [f"DP {dps[original_idx].get('DP No', 'N/A')}: {dps[original_idx].get('Name', 'Unnamed')}" for original_idx, dp in sorted_dps]
+                sorted_indices = [original_idx for original_idx, dp in sorted_dps]
+                
+                selected_sorted_idx = st.selectbox("Select DP", range(len(sorted_dps)), 
                                               format_func=lambda x: dp_options[x])
+                selected_dp_idx = sorted_indices[selected_sorted_idx]
                 
                 if st.button("🗑️ Delete DP", type="secondary"):
                     dp_to_delete = dps[selected_dp_idx]
@@ -1406,8 +1646,15 @@ def tasks_tab():
             }
             tasks_by_dp[str(dp_no)].append(task_data)
         
-        # Display tasks grouped by DP
-        for dp_no, dp_tasks in tasks_by_dp.items():
+        # Display tasks grouped by DP - sort numerically by DP number
+        def sort_dp_key(item):
+            dp_no = item[0]
+            try:
+                return int(dp_no) if dp_no.isdigit() else float('inf')
+            except:
+                return float('inf')
+        
+        for dp_no, dp_tasks in sorted(tasks_by_dp.items(), key=sort_dp_key):
             # Find DP details
             dp_name = "Unknown DP"
             dp_objective = "Unknown Objective"
@@ -1419,7 +1666,35 @@ def tasks_tab():
             
             with st.expander(f"📋 DP {dp_no}: {dp_name} (Objective: {dp_objective}) - {len(dp_tasks)} Tasks", expanded=True):
                 if dp_tasks:
-                    df = pd.DataFrame(dp_tasks)
+                    # Get original tasks for sorting by Task No
+                    dp_original_tasks = [task for task in tasks if str(task.get("dp_no") or task.get("DP No") or task.get("dp no") or task.get("DP") or task.get("dp") or "Unassigned") == str(dp_no)]
+                    
+                    # Sort tasks by Task No
+                    sorted_original_tasks = sort_tasks_numerically(dp_original_tasks)
+                    
+                    # Rebuild dp_tasks in sorted order
+                    sorted_dp_tasks = []
+                    for task in sorted_original_tasks:
+                        task_name = (task.get("description") or task.get("Desc") or task.get("Name") or 
+                                   task.get("Task Name") or task.get("desc") or task.get("name") or 
+                                   task.get("task name") or task.get("Task") or task.get("task") or
+                                   task.get("Description") or f"Task {task.get('Task No', '')}")
+                        
+                        weight_val = task.get("stated") or task.get("Weight") or task.get("weight") or task.get("Wt") or task.get("wt")
+                        progress_val = task.get("achieved") or task.get("Achieved %") or task.get("progress") or task.get("Progress") or task.get("achieved %") or task.get("Progress %")
+                        
+                        task_data = {
+                            "Task No": task.get("Task No", ""),
+                            "Task Name": str(task_name).strip() if task_name else "Unknown Task",
+                            "Weight": str(weight_val).strip() if weight_val and str(weight_val).lower() != 'nan' else "Not Set",
+                            "Progress (%)": str(progress_val).strip() if progress_val and str(progress_val).lower() != 'nan' else "0",
+                            "Type": task.get("Type", ""),
+                            "Force Group": task.get("Force Group", ""),
+                            "Criteria": task.get("Criteria", "")
+                        }
+                        sorted_dp_tasks.append(task_data)
+                    
+                    df = pd.DataFrame(sorted_dp_tasks)
                     display_force_table(df, use_container_width=True, force_type=force_name)
                 else:
                     st.info(f"No tasks assigned to DP {dp_no}")
@@ -1470,7 +1745,13 @@ def tasks_tab():
                         if st.button(f"➕ Add to {force.capitalize()}", type="primary", key=f"add_task_{force}") and task_name:
                             if "tasks" not in data:
                                 data["tasks"] = []
+                            
+                            # Generate next task number
+                            existing_task_nos = {int(task.get("Task No", 0)) for task in data["tasks"] if str(task.get("Task No", "")).isdigit()}
+                            next_task_no = max(existing_task_nos) + 1 if existing_task_nos else 1
+                            
                             data["tasks"].append({
+                                "Task No": next_task_no,
                                 "Name": task_name,
                                 "description": task_name,
                                 "DP No": selected_dp["dp_no"],
@@ -1483,6 +1764,8 @@ def tasks_tab():
                                 "Force Group": task_force_group,
                                 "Criteria": task_criteria
                             })
+                            # Sort tasks after adding to maintain sequential order
+                            data["tasks"] = sort_tasks_numerically(data["tasks"])
                             save_project(project, force, data)
                             st.success(f"✅ Task '{task_name}' added to {force} force")
                             st.rerun()
@@ -1602,13 +1885,103 @@ def tasks_tab():
                 st.info("No tasks to delete")
 def ko_tab():
     import itertools
-    st.header("⚖️ KO Method (Task Weightage within DP)")
-    st.markdown("*Pairwise comparison method to determine task weights within a selected Decision Point*")
+    st.header("⚖️ KO Method (Pairwise Comparison)")
+    st.markdown("*Advanced analytical hierarchy process for priority weightage calculation*")
+    
+    # Create tabs for different comparison types
+    tab1, tab2 = st.tabs(["🎯 DP Comparison", "✅ Task Comparison"])
     
     s = st.session_state
     project = s.get("project")
     side = s.get("side")
     data = load_project(project, side)
+    
+    with tab1:
+        dp_comparison_tab(s, project, side, data)
+    
+    with tab2:
+        task_comparison_tab(s, project, side, data)
+
+def dp_comparison_tab(s, project, side, data):
+    """Tab for comparing DPs within an objective"""
+    st.subheader("🎯 DP Comparison within Objective")
+    st.markdown("*Compare Decision Points within a selected Objective to determine their priority weights*")
+    
+    objectives = data.get("objectives", [])
+    dps = data.get("dps", [])
+    
+    if not objectives:
+        st.warning("⚠️ No objectives found. Please create objectives first.")
+        return
+    
+    if not dps:
+        st.warning("⚠️ No DPs found. Please create DPs first.")
+        return
+    
+    # Step 1: Objective Selection
+    st.markdown("#### 📋 Step 1: Select Objective")
+    
+    # Sort objectives numerically and create mapping
+    sorted_objectives = sort_objectives_numerically(objectives)
+    obj_to_original_idx = {id(obj): objectives.index(obj) for obj in objectives}
+    
+    obj_options = {}
+    for i, obj in enumerate(sorted_objectives):
+        obj_no = obj.get("Objective No", i+1)
+        obj_name = obj.get("Name", obj.get("name", f"Objective {obj_no}"))
+        obj_options[f"Obj {obj_no}: {obj_name}"] = obj
+    
+    selected_obj_display = st.selectbox(
+        "Select objective for DP comparison:",
+        list(obj_options.keys()),
+        help="Choose the objective whose DPs you want to compare"
+    )
+    
+    selected_objective = obj_options[selected_obj_display]
+    
+    # Find DPs for selected objective
+    objective_name = selected_objective.get("Name", selected_objective.get("name", ""))
+    obj_dps = [dp for dp in dps if dp.get("Objective", "") == objective_name]
+    
+    if len(obj_dps) < 2:
+        st.info(f"📝 Need at least 2 DPs in objective '{objective_name}' for comparison. Found {len(obj_dps)} DP(s).")
+        if len(obj_dps) == 1:
+            st.info("💡 Single DP automatically gets 100% weight.")
+            obj_dps[0]["Weight"] = 100.0
+            obj_dps[0]["weight"] = 100.0
+            # Update in main DPs list
+            for i, dp in enumerate(dps):
+                if dp.get("Objective") == objective_name:
+                    dps[i] = obj_dps[0]
+                    break
+            data["dps"] = dps
+            save_project(project, side, data)
+            st.success("✅ Single DP weight set to 100%")
+        return
+    
+    # Step 2: Display objective info and comparison
+    st.markdown("#### ⚖️ Step 2: Objective Overview & Pairwise Comparison")
+    
+    st.markdown(f"""
+    **Objective:** {objective_name}  
+    **DPs to Compare:** {len(obj_dps)}
+    """)
+    
+    # Display DPs in this objective
+    with st.expander("📝 DPs in this Objective", expanded=False):
+        for i, dp in enumerate(obj_dps):
+            dp_name = dp.get("Name", dp.get("name", f"DP {i+1}"))
+            current_weight = dp.get("Weight", dp.get("weight", 0))
+            st.write(f"**{i+1}.** {dp_name} (Current Weight: {current_weight}%)")
+    
+    # KO Method for DPs
+    perform_ko_comparison(s, project, side, data, obj_dps, "dp", f"obj_{selected_obj_idx}", "DP", objective_name)
+
+def task_comparison_tab(s, project, side, data):
+    """Tab for comparing tasks within a DP"""
+    st.subheader("✅ Task Comparison within DP")
+    st.markdown("*Compare tasks within a selected Decision Point to determine their priority weights*")
+    
     dps = data.get("dps", [])
     tasks = data.get("tasks", [])
     
@@ -1628,19 +2001,25 @@ def ko_tab():
         return
     
     # Step 1: DP Selection
-    st.subheader("🎯 Step 1: Select Decision Point")
+    st.markdown("#### 🎯 Step 1: Select Decision Point")
     
-    # Create DP options with names and numbers
-    dp_options = {}
+    # Create DP options with names and numbers - sort numerically
+    dp_list = []
     for dp in dps:
         dp_no = get_dp_no(dp)
         dp_name = dp.get("Name", dp.get("name", f"DP {dp_no}"))
         if dp_no is not None:
-            dp_options[f"DP {dp_no}: {dp_name}"] = dp_no
+            dp_list.append((dp_no, f"DP {dp_no}: {dp_name}"))
     
-    if not dp_options:
+    if not dp_list:
         st.error("❌ No valid DPs found. Please ensure DPs have proper DP No assigned.")
         return
+    
+    # Sort numerically by DP number
+    dp_list.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else float('inf'))
+    
+    # Create options dictionary in sorted order
+    dp_options = {display: dp_no for dp_no, display in dp_list}
     
     selected_dp_display = st.selectbox(
         "Select DP for task weightage calculation:",
@@ -1672,7 +2051,7 @@ def ko_tab():
         return
     
     # Step 2: Display DP and Task Information & Pairwise Comparison
-    st.subheader(f"📋 Step 2: DP Overview & Pairwise Comparison")
+    st.markdown("#### 📋 Step 2: DP Overview & Pairwise Comparison")
     
     # Find DP details
     selected_dp_info = next((dp for dp in dps if str(get_dp_no(dp)) == str(selected_dp_no)), {})
@@ -1694,43 +2073,59 @@ def ko_tab():
             current_weight = task.get("Weight", task.get("weight", task.get("stated", 0)))
             st.write(f"**{i+1}.** {task_name} (Current Weight: {current_weight}%)")
     
-    # KO Method Implementation
-    st.markdown("### ⚖️ Pairwise Comparison")
+    # KO Method for tasks
+    perform_ko_comparison(s, project, side, data, dp_tasks, "task", selected_dp_no, "Task", dp_name)
+
+def perform_ko_comparison(s, project, side, data, items, item_type, identifier, item_label, parent_name):
+    """
+    Generic KO comparison function for both DPs and tasks
+    """
+    import itertools
     
-    pairs = list(itertools.combinations(range(len(dp_tasks)), 2))
-    key_prefix = f"ko_tasks_{project}_{side}_{selected_dp_no}"
+    if len(items) < 2:
+        return
     
-    # Initialize KO session state for this DP's tasks
+    pairs = list(itertools.combinations(range(len(items)), 2))
+    key_prefix = f"ko_{item_type}_{project}_{side}_{identifier}"
+    
+    # Initialize KO session state
     if f"{key_prefix}_idx" not in s:
         s[f"{key_prefix}_idx"] = 0
-        s[f"{key_prefix}_scores"] = {i: 1 for i in range(len(dp_tasks))}
+        s[f"{key_prefix}_scores"] = {i: 1 for i in range(len(items))}
     
-    # Reset if DP changed
-    current_dp_key = f"{key_prefix}_current_dp"
-    if s.get(current_dp_key) != selected_dp_no:
+    # Reset if identifier changed
+    current_key = f"{key_prefix}_current"
+    if s.get(current_key) != identifier:
         s[f"{key_prefix}_idx"] = 0
-        s[f"{key_prefix}_scores"] = {i: 1 for i in range(len(dp_tasks))}
-        s[current_dp_key] = selected_dp_no
+        s[f"{key_prefix}_scores"] = {i: 1 for i in range(len(items))}
+        s[current_key] = identifier
     
     idx = s[f"{key_prefix}_idx"]
     scores = s[f"{key_prefix}_scores"]
     
+    st.markdown("#### ⚖️ Pairwise Comparison")
+    
     # KO Voting UI
     if idx < len(pairs):
         a_idx, b_idx = pairs[idx]
-        task_a = dp_tasks[a_idx]
-        task_b = dp_tasks[b_idx]
+        item_a = items[a_idx]
+        item_b = items[b_idx]
         
-        # Get task names
-        task_a_name = (task_a.get("description") or task_a.get("Desc") or task_a.get("Name") or 
-                      task_a.get("Task Name") or task_a.get("desc") or task_a.get("name") or 
-                      f"Task {a_idx+1}")
-        task_b_name = (task_b.get("description") or task_b.get("Desc") or task_b.get("Name") or 
-                      task_b.get("Task Name") or task_b.get("desc") or task_b.get("name") or 
-                      f"Task {b_idx+1}")
+        # Get item names based on type
+        def get_item_name(item, idx, item_type):
+            if item_type == "task":
+                return (item.get("description") or item.get("Desc") or item.get("Name") or 
+                       item.get("Task Name") or item.get("desc") or item.get("name") or 
+                       f"Task {idx+1}")
+            else:  # DP
+                return (item.get("Name") or item.get("name") or f"DP {idx+1}")
+        
+        item_a_name = get_item_name(item_a, a_idx, item_type)
+        item_b_name = get_item_name(item_b, b_idx, item_type)
         
         st.markdown(f"**Comparison {idx+1} of {len(pairs)}**")
-        st.markdown("*Which task is more important/critical for achieving the DP objective?*")
+        comparison_question = f"*Which {item_type} is more important/critical for achieving the {parent_name} objective?*" if item_type == "task" else f"*Which DP has higher priority within the {parent_name} objective?*"
+        st.markdown(comparison_question)
         
         col1, col2 = st.columns(2)
         
@@ -1738,11 +2133,11 @@ def ko_tab():
             st.markdown(f"""
             <div style="background: #1e40af; color: white; padding: 15px; border-radius: 10px; text-align: center;">
                 <h4 style="color: white; margin: 0;">Option A</h4>
-                <p style="color: white; margin: 10px 0;">{task_a_name}</p>
+                <p style="color: white; margin: 10px 0;">{item_a_name}</p>
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button(f"🅰️ Choose Task A", key=f"task_a_{idx}", type="primary"):
+            if st.button(f"🅰️ Choose {item_label} A", key=f"{item_type}_a_{idx}_{identifier}", type="primary"):
                 scores[a_idx] += 1
                 s[f"{key_prefix}_idx"] += 1
                 st.rerun()
@@ -1751,11 +2146,11 @@ def ko_tab():
             st.markdown(f"""
             <div style="background: #dc2626; color: white; padding: 15px; border-radius: 10px; text-align: center;">
                 <h4 style="color: white; margin: 0;">Option B</h4>
-                <p style="color: white; margin: 10px 0;">{task_b_name}</p>
+                <p style="color: white; margin: 10px 0;">{item_b_name}</p>
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button(f"🅱️ Choose Task B", key=f"task_b_{idx}", type="primary"):
+            if st.button(f"🅱️ Choose {item_label} B", key=f"{item_type}_b_{idx}_{identifier}", type="primary"):
                 scores[b_idx] += 1
                 s[f"{key_prefix}_idx"] += 1
                 st.rerun()
@@ -1772,58 +2167,94 @@ def ko_tab():
         # Calculate weights based on scores
         total_score = sum(scores.values()) if scores else 1
         
-        # Update task weights
-        updated_tasks = []
-        for i, task in enumerate(dp_tasks):
+        # Update item weights
+        updated_items = []
+        for i, item in enumerate(items):
             if i in scores:
                 # Calculate percentage weight
                 weight_percentage = (scores[i] / total_score) * 100
                 
-                # Update task with new weight
-                task["Weight"] = round(weight_percentage, 2)
-                task["weight"] = round(weight_percentage, 2)
-                task["stated"] = round(weight_percentage, 2)
-                task["Stated %"] = round(weight_percentage, 2)
+                # Update item with new weight
+                item["Weight"] = round(weight_percentage, 2)
+                item["weight"] = round(weight_percentage, 2)
                 
-                updated_tasks.append({
-                    "name": (task.get("description") or task.get("Desc") or task.get("Name") or 
-                            task.get("Task Name") or task.get("desc") or task.get("name") or 
-                            f"Task {i+1}"),
+                if item_type == "task":
+                    item["stated"] = round(weight_percentage, 2)
+                    item["Stated %"] = round(weight_percentage, 2)
+                
+                # Get item name for display
+                if item_type == "task":
+                    item_name = (item.get("description") or item.get("Desc") or item.get("Name") or 
+                               item.get("Task Name") or item.get("desc") or item.get("name") or 
+                               f"Task {i+1}")
+                else:  # DP
+                    item_name = (item.get("Name") or item.get("name") or f"DP {i+1}")
+                
+                updated_items.append({
+                    "name": item_name,
                     "score": scores[i],
                     "weight": round(weight_percentage, 2)
                 })
         
-        # Update main tasks list
-        for i, task in enumerate(tasks):
-            if str(get_task_dp(task)) == str(selected_dp_no):
-                # Find corresponding updated task
-                for j, dp_task in enumerate(dp_tasks):
-                    if task is dp_task or (
-                        task.get("description") == dp_task.get("description") and
-                        task.get("Name") == dp_task.get("Name")
-                    ):
-                        tasks[i] = dp_task
-                        break
+        # Update main data list based on item type
+        if item_type == "task":
+            # Update main tasks list
+            tasks = data.get("tasks", [])
+            def get_task_dp(task):
+                return task.get("DP No") or task.get("dp_no")
+            
+            for i, task in enumerate(tasks):
+                if str(get_task_dp(task)) == str(identifier):
+                    # Find corresponding updated task
+                    for j, updated_task in enumerate(items):
+                        if task is updated_task or (
+                            task.get("description") == updated_task.get("description") and
+                            task.get("Name") == updated_task.get("Name")
+                        ):
+                            tasks[i] = updated_task
+                            break
+            data["tasks"] = tasks
+            
+        else:  # DP
+            # Update main DPs list
+            dps = data.get("dps", [])
+            objectives = data.get("objectives", [])
+            
+            # Find objective name
+            objective_name = parent_name if item_type == "dp" else ""
+            
+            for i, dp in enumerate(dps):
+                if dp.get("Objective") == objective_name:
+                    # Find corresponding updated DP
+                    for j, updated_dp in enumerate(items):
+                        if dp is updated_dp or dp.get("Name") == updated_dp.get("Name"):
+                            dps[i] = updated_dp
+                            break
+            data["dps"] = dps
         
         # Save updated data
-        data["tasks"] = tasks
         save_project(project, side, data)
         
-        st.success(f"✅ KO Method completed! Task weights updated for DP {selected_dp_no}")
+        success_msg = f"✅ KO Method completed! {item_label} weights updated"
+        if item_type == "task":
+            success_msg += f" for DP {identifier}"
+        else:
+            success_msg += f" for objective '{parent_name}'"
+        st.success(success_msg)
         
         # Display results
-        st.subheader("📊 Calculated Task Weights")
+        st.subheader(f"📊 Calculated {item_label} Weights")
         
         # Results table
         col1, col2, col3 = st.columns(3)
-        col1.markdown("**Task Name**")
+        col1.markdown(f"**{item_label} Name**")
         col2.markdown("**Score**") 
         col3.markdown("**Weight (%)**")
         
-        for task_result in updated_tasks:
-            col1.write(task_result["name"])
-            col2.write(task_result["score"])
-            col3.write(f"{task_result['weight']}%")
+        for item_result in updated_items:
+            col1.write(item_result["name"])
+            col2.write(item_result["score"])
+            col3.write(f"{item_result['weight']}%")
         
         st.divider()
         
@@ -1831,15 +2262,18 @@ def ko_tab():
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("🔄 Restart KO for this DP", type="secondary"):
+            restart_key = f"restart_ko_{item_type}_{identifier}"
+            if st.button(f"🔄 Restart KO for this {item_label}", key=restart_key, type="secondary"):
                 s[f"{key_prefix}_idx"] = 0
-                s[f"{key_prefix}_scores"] = {i: 1 for i in range(len(dp_tasks))}
+                s[f"{key_prefix}_scores"] = {i: 1 for i in range(len(items))}
                 st.rerun()
         
         with col2:
-            if st.button("🎯 Select Different DP", type="secondary"):
-                # Clear current session state to allow new DP selection
-                keys_to_clear = [k for k in s.keys() if k.startswith(f"ko_tasks_{project}_{side}_")]
+            select_diff_key = f"select_diff_{item_type}_{identifier}"
+            select_label = "Objective" if item_type == "dp" else "DP"
+            if st.button(f"🎯 Select Different {select_label}", key=select_diff_key, type="secondary"):
+                # Clear current session state to allow new selection
+                keys_to_clear = [k for k in s.keys() if k.startswith(f"ko_{item_type}_{project}_{side}_")]
                 for key in keys_to_clear:
                     del s[key]
                 st.rerun()
@@ -1848,6 +2282,9 @@ def ko_tab():
 def progress_entry_tab():
     st.header("📊 Progress Entry (Control Only)")
     st.markdown("*Update task progress and weights for all forces*")
+    
+    # Control-specific information
+    st.info("ℹ️ **Control Master View**: This is Control's centralized progress tracking. Individual forces have their own independent progress tracking that doesn't affect this view.")
     
     project = st.session_state.get("project")
     
@@ -1869,27 +2306,49 @@ def progress_entry_tab():
             with tabs[i]:
                 show_force_progress_entry(project, force)
 
-def show_force_progress_entry(project, force):
+def show_force_progress_entry(project, force, independent=False):
     """Show progress entry interface for a specific force"""
     
-    data = load_project(project, force)
+    # Load data using appropriate method based on mode
+    if independent:
+        data = load_independent_project(project, force)
+    else:
+        data = load_project(project, force)
+        
     tasks = data.get("tasks", [])
     dps = data.get("dps", [])
     
     color = FORCE_COLORS.get(force, "#0f172a")
     
     # Force header
-    st.markdown(f"""
-    <div style="background: linear-gradient(90deg, {color}, {color}88); 
-         padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid {color};">
-        <h3 style="color: white; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.7);">
-            {get_force_emoji(force)} {force.capitalize()} Force - Progress Update
-        </h3>
-        <p style="color: white; margin: 5px 0 0 0; opacity: 0.9;">
-            Update task weights and progress for strategic planning
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    if independent:
+        header_title = f"{get_force_emoji(force)} My Force Progress Entry"
+        header_desc = "Independent task progress tracking and weight management"
+        st.markdown(f"""
+        <div style="background: linear-gradient(90deg, {color}, {color}88); 
+             padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid {color};">
+            <h3 style="color: white; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.7);">
+                {header_title}
+            </h3>
+            <p style="color: white; margin: 5px 0 0 0; opacity: 0.9;">
+                {header_desc}
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.info(f"ℹ️ **Independent Mode**: Your progress entries are saved separately from Control updates. This allows you to track your own progress without affecting Control's master tracking system.")
+    else:
+        st.markdown(f"""
+        <div style="background: linear-gradient(90deg, {color}, {color}88); 
+             padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid {color};">
+            <h3 style="color: white; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.7);">
+                {get_force_emoji(force)} {force.capitalize()} Force - Progress Update
+            </h3>
+            <p style="color: white; margin: 5px 0 0 0; opacity: 0.9;">
+                Update task weights and progress for strategic planning
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
     
     if not tasks:
         st.info(f"📝 No tasks found for {force} force. Please add tasks in the Tasks tab first.")
@@ -1902,6 +2361,10 @@ def show_force_progress_entry(project, force):
         if str(dp_no) not in tasks_by_dp:
             tasks_by_dp[str(dp_no)] = []
         tasks_by_dp[str(dp_no)].append((i, task))
+    
+    # Sort tasks within each DP by Task No
+    for dp_no in tasks_by_dp:
+        tasks_by_dp[dp_no].sort(key=lambda x: get_numeric_sort_key(x[1], "Task No"))
     
     # Summary statistics
     total_tasks = len(tasks)
@@ -1919,8 +2382,15 @@ def show_force_progress_entry(project, force):
     
     st.divider()
     
-    # Display tasks by DP with progress update interface
-    for dp_no, dp_tasks in sorted(tasks_by_dp.items()):
+    # Display tasks by DP with progress update interface - sort numerically by DP number
+    def sort_dp_key(item):
+        dp_no = item[0]
+        try:
+            return int(dp_no) if dp_no.isdigit() else float('inf')
+        except:
+            return float('inf')
+    
+    for dp_no, dp_tasks in sorted(tasks_by_dp.items(), key=sort_dp_key):
         # Find DP details
         dp_name = "Unknown DP"
         dp_objective = "Unknown Objective"
@@ -1951,9 +2421,12 @@ def show_force_progress_entry(project, force):
                     
                 task_color = "#38a169" if current_progress >= 75 else "#e53e3e" if current_progress < 25 else "#d69e2e"
                 
+                # Get task number for display
+                task_no = task.get("Task No", task_idx+1)
+                
                 st.markdown(f"""
                 <div style="background: {task_color}; color: white; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
-                    <h4 style="color: white; margin: 0;">🔹 Task {task_idx+1}: {task_name}</h4>
+                    <h4 style="color: white; margin: 0;">🔹 Task {task_no}: {task_name}</h4>
                     <p style="margin: 5px 0 0 0; opacity: 0.9;">Current Progress: {current_progress:.1f}%</p>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2041,7 +2514,12 @@ def show_force_progress_entry(project, force):
                         # Save updated task
                         tasks[original_idx] = updated_task
                         data["tasks"] = tasks
-                        save_project(project, force, data)
+                        
+                        # Save using appropriate method based on mode
+                        if independent:
+                            save_independent_project(project, force, data)
+                        else:
+                            save_project(project, force, data)
                         
                         st.success(f"✅ Task '{task_name}' progress updated successfully!")
                         st.balloons()
@@ -2053,6 +2531,9 @@ def show_force_progress_entry(project, force):
 def dashboard_tab():
     st.header("📊 Control Dashboard")
     st.markdown("*Real-time operational status and progress monitoring for all forces*")
+    
+    # Control-specific information
+    st.info("ℹ️ **Control Master View**: This dashboard shows Control's centralized data. Individual forces have independent dashboards showing their own progress tracking.")
     
     project = st.session_state.get("project")
     rag = st.session_state.get("rag", {"red": 40, "amber": 70})
@@ -2092,7 +2573,7 @@ def show_overview_dashboard(project, rag):
     """Show high-level overview of all forces"""
     
     # Create tabs for different progress types
-    dp_tab, phase_tab, obj_tab = st.tabs(["🎯 DP Progress", "⏱️ Phase Progress", "🎖️ Objective Progress"])
+    dp_tab, phase_tab, obj_tab, theater_tab = st.tabs(["🎯 DP Progress", "⏱️ Phase Progress", "🎖️ Objective Progress", "🏛️ Theater Progress"])
     
     # DP Progress Tab
     with dp_tab:
@@ -2244,17 +2725,146 @@ def show_overview_dashboard(project, rag):
                 if red_count > 0:
                     st.markdown(f"🔴 {red_count} Red")
     
+    # Theater Progress Tab
+    with theater_tab:
+        st.subheader("🏛️ Theater Command Overview")
+        st.markdown("*Theater-level progress showing average performance of grouped forces*")
+        
+        # Load theater configuration
+        theater_config = load_theater_config(project)
+        
+        if not theater_config["theaters"]:
+            st.info("🏛️ No theaters configured yet. Use Theater Command to create theater groupings.")
+        else:
+            # Display theater progress
+            theater_cols = st.columns(min(len(theater_config["theaters"]), 3))  # Max 3 theater columns
+            
+            for idx, (theater_name, theater_data) in enumerate(theater_config["theaters"].items()):
+                with theater_cols[idx % len(theater_cols)]:
+                    # Calculate theater progress
+                    theater_progress = calculate_theater_progress(project, theater_data["forces"])
+                    
+                    # Progress color coding for theaters
+                    if theater_progress < rag["red"]:
+                        theater_color = "#ef4444"
+                        status_emoji = "🔴"
+                        status_text = "Low Progress"
+                    elif theater_progress < rag["amber"]:
+                        theater_color = "#f59e0b"
+                        status_emoji = "🟡"
+                        status_text = "Moderate Progress"
+                    else:
+                        theater_color = "#10b981"
+                        status_emoji = "🟢"
+                        status_text = "Good Progress"
+                    
+                    # Theater progress card
+                    st.markdown(f"""
+                    <div style="background: linear-gradient(135deg, {theater_color}20, {theater_color}05); 
+                                border: 2px solid {theater_color}40; border-radius: 15px; padding: 20px; margin-bottom: 15px;">
+                        <div style="text-align: center;">
+                            <h3 style="margin: 0; color: white; text-shadow: none;">🏛️ {theater_name}</h3>
+                            <h1 style="margin: 10px 0; color: {theater_color}; font-size: 3rem; text-shadow: none;">{theater_progress:.1f}%</h1>
+                            <p style="margin: 5px 0; color: white; font-weight: bold; text-shadow: none;">{status_emoji} {status_text}</p>
+                            <p style="margin: 0; color: #e5e7eb; font-size: 0.9rem; text-shadow: none;">
+                                Forces: {len(theater_data["forces"])}<br>
+                                {", ".join([f.capitalize() for f in theater_data["forces"]])}
+                            </p>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Show individual force progress within theater
+                    st.markdown(f"**Force Breakdown in {theater_name}:**")
+                    for force in theater_data["forces"]:
+                        try:
+                            force_data = load_independent_project(project, force)
+                            if force_data and "objective" in force_data:
+                                objectives = force_data["objective"]
+                                if objectives:
+                                    force_progress = sum(obj.get("Progress", 0) for obj in objectives) / len(objectives)
+                                    force_color = FORCE_COLORS.get(force, "#64748b")
+                                    
+                                    # Force progress indicator
+                                    if force_progress < rag["red"]:
+                                        force_status = "🔴"
+                                    elif force_progress < rag["amber"]:
+                                        force_status = "🟡"
+                                    else:
+                                        force_status = "🟢"
+                                    
+                                    st.markdown(f"""
+                                    <div style="background: {force_color}15; border-left: 4px solid {force_color}; 
+                                                padding: 8px; margin: 5px 0; border-radius: 5px;">
+                                        <span style="color: {force_color}; font-weight: bold;">{get_force_emoji(force)} {force.capitalize()}</span>
+                                        <span style="float: right;">{force_status} {force_progress:.1f}%</span>
+                                    </div>
+                                    """, unsafe_allow_html=True)
+                        except Exception as e:
+                            st.markdown(f"<small style='color: #ef4444;'>Error loading {force}: {str(e)}</small>", unsafe_allow_html=True)
+            
+            # Overall theater statistics
+            if len(theater_config["theaters"]) > 1:
+                st.markdown("---")
+                st.subheader("📊 Theater Command Summary")
+                
+                # Calculate overall theater metrics
+                theater_progresses = []
+                total_forces_in_theaters = 0
+                
+                for theater_data in theater_config["theaters"].values():
+                    theater_prog = calculate_theater_progress(project, theater_data["forces"])
+                    theater_progresses.append(theater_prog)
+                    total_forces_in_theaters += len(theater_data["forces"])
+                
+                if theater_progresses:
+                    avg_theater_progress = sum(theater_progresses) / len(theater_progresses)
+                    
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.metric("🏛️ Active Theaters", len(theater_config["theaters"]))
+                    with col2:
+                        st.metric("⚔️ Forces in Theaters", total_forces_in_theaters)
+                    with col3:
+                        st.metric("🎯 Average Theater Progress", f"{avg_theater_progress:.1f}%")
+                    with col4:
+                        unassigned_count = len(theater_config.get("unassigned_forces", []))
+                        st.metric("🔄 Unassigned Forces", unassigned_count)
+        
+        # Show unassigned forces if any
+        if theater_config.get("unassigned_forces"):
+            st.markdown("---")
+            st.subheader("🔄 Unassigned Forces")
+            st.info(f"Forces not assigned to any theater: {', '.join([f.capitalize() for f in theater_config['unassigned_forces']])}")
+            st.markdown("*Use Theater Command to assign these forces to theaters.*")
 
 
-def show_force_dashboard(side, project, rag):
+def show_force_dashboard(side, project, rag, independent=False):
     """Show detailed dashboard for a specific force"""
-    st.subheader(f"{get_force_emoji(side)} {side.capitalize()} Force - Detailed Analysis")
+    if independent:
+        st.subheader(f"📊 My Force Dashboard - Real-time Status")
+        st.markdown(f"*{get_force_emoji(side)} {side.capitalize()} Force operational progress and analytics*")
+    else:
+        st.subheader(f"{get_force_emoji(side)} {side.capitalize()} Force - Detailed Analysis")
     
-    data = load_project(project, side)
+    # Load data using appropriate method based on mode
+    if independent:
+        data = load_independent_project(project, side)
+    else:
+        data = load_project(project, side)
     progress = compute_progress(data)
     
     if not any([progress.get("dp"), progress.get("objective"), progress.get("phase")]):
-        st.info(f"No data available for {side.capitalize()} force. Please configure objectives, phases, and DPs first.")
+        if independent:
+            st.warning(f"⚠️ No progress data available for {side.capitalize()} force dashboard.")
+            st.info("""
+            **Possible solutions:**
+            1. 📊 Use **Force Progress Entry** to set some task progress first
+            2. 🔄 Click **Reset Independent Data** button above to regenerate from base structure  
+            3. 🔧 Ensure tasks, DPs, objectives, and phases are configured by Control
+            """)
+        else:
+            st.info(f"No data available for {side.capitalize()} force. Please configure objectives, phases, and DPs first.")
         return
     
     # Create sub-tabs for different chart types
@@ -2278,8 +2888,12 @@ def show_dp_analysis(progress, data, rag, side):
         st.info("No Decisive Points configured for this force.")
         return
     
-    dp_vals = list(progress["dp"].values())
-    dp_numbers = list(progress["dp"].keys())
+    # Sort DP data numerically by DP number for display
+    dp_items = list(progress["dp"].items())
+    dp_items.sort(key=lambda x: int(x[0]) if str(x[0]).isdigit() else float('inf'))
+    
+    dp_numbers = [item[0] for item in dp_items]
+    dp_vals = [item[1] for item in dp_items]
     
     # Get DP names from the data and create clean labels
     dps_data = data.get("dps", [])
@@ -2331,11 +2945,11 @@ def show_dp_analysis(progress, data, rag, side):
     
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("🔴 Critical DPs", red_count)
+        st.metric("🔴 Low Progress", red_count)
     with col2:
-        st.metric("🟡 Caution DPs", amber_count)
+        st.metric("🟡 Moderate Progress", amber_count)
     with col3:
-        st.metric("🟢 On-Track DPs", green_count)
+        st.metric("🟢 Good Progress", green_count)
     with col4:
         st.metric("📊 Average DP Progress", f"{avg_dp_progress:.1f}%")
 
@@ -2345,8 +2959,12 @@ def show_objective_analysis(progress, side):
         st.info("No Objectives configured for this force.")
         return
         
-    obj_vals = list(progress["objective"].values())
-    obj_names = list(progress["objective"].keys())
+    # Sort objectives numerically by objective name/number for display
+    obj_items = list(progress["objective"].items())
+    obj_items.sort(key=lambda x: get_numeric_sort_key({"Objective No": x[0]}, "Objective No"))
+    
+    obj_names = [item[0] for item in obj_items]
+    obj_vals = [item[1] for item in obj_items]
     
     # Colorful bars for objectives
     obj_colors = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4", "#84cc16", "#f97316", "#ec4899", "#6366f1"]
@@ -2380,8 +2998,12 @@ def show_phase_analysis(progress, side):
         st.info("No Phases configured for this force.")
         return
         
-    phase_vals = list(progress["phase"].values())
-    phase_names = list(progress["phase"].keys())
+    # Sort phases numerically by phase name/number for display
+    phase_items = list(progress["phase"].items())
+    phase_items.sort(key=lambda x: get_numeric_sort_key({"Phase No": x[0]}, "Phase No"))
+    
+    phase_names = [item[0] for item in phase_items]
+    phase_vals = [item[1] for item in phase_items]
     
     # Colorful gradient bars for phases
     phase_colors = ["#059669", "#7c3aed", "#dc2626", "#2563eb", "#d97706", "#0891b2", "#be185d", "#4338ca", "#65a30d", "#c2410c"]
@@ -2612,6 +3234,64 @@ def show_compact_progress_overview(project):
     with col_summary3:
         st.metric("🎖️ Avg Objective Progress", f"{avg_obj:.1f}%")
 
+# --- Force Dashboard Tab ---
+def force_dashboard_tab():
+    """Independent dashboard for individual forces to view their own progress"""
+    role = st.session_state.get("role")
+    project = st.session_state.get("project")
+    rag = st.session_state.get("rag", {"red": 40, "amber": 70})
+    
+    if role == "control":
+        st.warning("⚠️ This is the Force Dashboard. Use the main Dashboard for control operations.")
+        return
+    
+    # Get force emoji and display name
+    force_emoji = get_force_emoji(role)
+    force_display = role.upper() if role else "UNKNOWN"
+    
+    st.header(f"{force_emoji} {force_display} Force Dashboard")
+    st.markdown(f"*Independent progress monitoring and operational status for {force_display} Force*")
+    
+    if not role or role not in SIDES:
+        st.error("❌ Invalid force role. Please contact your administrator.")
+        return
+    
+    # Option to reset independent data if needed
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 Reset Independent Data", help="Regenerate independent data from base structure"):
+            independent_file = f"{project}_{role}_independent.json"
+            if os.path.exists(independent_file):
+                os.remove(independent_file)
+            st.success("Independent data reset. Please refresh the page.")
+            st.rerun()
+    
+    # Show only this force's dashboard
+    show_force_dashboard(role, project, rag, independent=True)
+
+def force_progress_entry_tab():
+    """Independent progress entry for individual forces"""
+    role = st.session_state.get("role")
+    project = st.session_state.get("project")
+    
+    if role == "control":
+        st.warning("⚠️ This is the Force Progress Entry. Use the main Progress Entry for control operations.")
+        return
+    
+    # Get force emoji and display name  
+    force_emoji = get_force_emoji(role)
+    force_display = role.upper() if role else "UNKNOWN"
+    
+    st.header(f"{force_emoji} {force_display} Force Progress Entry")
+    st.markdown(f"*Independent progress tracking and task management for {force_display} Force*")
+    
+    if not role or role not in SIDES:
+        st.error("❌ Invalid force role. Please contact your administrator.")
+        return
+    
+    # Show force-specific progress entry interface
+    show_force_progress_entry(project, role, independent=True)
+
 # --- Control Panel Tab ---
 def control_panel_tab():
     st.header("⚙️ Control Panel")
@@ -2829,6 +3509,169 @@ def force_manager_tab():
         st.success(f"Added {new_force.capitalize()} force.")
         st.rerun()
 
+# --- Theater Command Tab ---
+def theater_command_tab():
+    st.header("🏛️ Theater Command")
+    st.write("Manage theater groupings and view combined progress.")
+    
+    if not st.session_state.get("project"):
+        st.error("Please select a project first")
+        return
+        
+    project = st.session_state["project"]
+    
+    # Load theater configuration
+    theater_config = load_theater_config(project)
+    available_forces = get_available_forces(project)
+    
+    if not available_forces:
+        st.warning("⚠️ No forces found. Please add forces in Force Manager first.")
+        return
+    
+    # Display current theaters
+    st.subheader("📊 Current Theater Status")
+    
+    if theater_config["theaters"]:
+        # Create columns for theater overview
+        theater_names = list(theater_config["theaters"].keys())
+        if theater_names:
+            cols = st.columns(len(theater_names))
+            for idx, (theater_name, theater_data) in enumerate(theater_config["theaters"].items()):
+                with cols[idx]:
+                    # Calculate theater progress
+                    theater_progress = calculate_theater_progress(project, theater_data["forces"])
+                    
+                    # Progress color coding
+                    progress_color = "#ef4444" if theater_progress < 30 else "#f59e0b" if theater_progress < 70 else "#10b981"
+                    
+                    st.markdown(f"""
+                    <div style="background:linear-gradient(135deg, {progress_color}15, {progress_color}05); 
+                                border:1px solid {progress_color}40; border-radius:12px; padding:1rem; margin-bottom:1rem;">
+                        <h4 style="color:white; margin:0; text-align:center; text-shadow:none; font-weight:600;">🏛️ {theater_name}</h4>
+                        <div style="text-align:center; margin:0.5rem 0;">
+                            <span style="font-size:2rem; font-weight:bold; color:{progress_color}; text-shadow:none;">{theater_progress:.1f}%</span><br>
+                            <span style="color:#e5e7eb; font-size:0.9rem; text-shadow:none;">Average Progress</span>
+                        </div>
+                        <div style="color:#e5e7eb; font-size:0.85rem; text-align:center; text-shadow:none;">
+                            Forces: {len(theater_data["forces"])}<br>
+                            {", ".join([f.capitalize() for f in theater_data["forces"]])}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Theater management buttons
+                    if st.button(f"Manage {theater_name}", key=f"manage_{theater_name}"):
+                        st.session_state[f"managing_theater"] = theater_name
+                    if st.button(f"Delete {theater_name}", key=f"delete_{theater_name}", type="secondary"):
+                        # Move forces back to unassigned
+                        theater_config["unassigned_forces"].extend(theater_data["forces"])
+                        del theater_config["theaters"][theater_name]
+                        save_theater_config(project, theater_config)
+                        st.success(f"Deleted theater {theater_name}")
+                        st.rerun()
+    else:
+        st.info("No theaters configured yet. Create your first theater below.")
+    
+    # Show unassigned forces
+    if theater_config["unassigned_forces"]:
+        st.subheader("🔄 Unassigned Forces")
+        unassigned_cols = st.columns(len(theater_config["unassigned_forces"]))
+        for idx, force in enumerate(theater_config["unassigned_forces"]):
+            with unassigned_cols[idx]:
+                color = FORCE_COLORS.get(force, "#64748b")
+                st.markdown(f"""
+                <div style="background:{color}20; border:1px solid {color}60; 
+                            border-radius:8px; padding:0.5rem; text-align:center; color:{color};">
+                    <strong>{force.capitalize()}</strong>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Create new theater
+    st.subheader("➕ Create New Theater")
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        new_theater_name = st.text_input("Theater Name", placeholder="e.g., Northern Theater")
+    
+    with col2:
+        # Get unassigned forces for selection
+        unassigned = [f for f in available_forces if f not in [force for theater in theater_config["theaters"].values() for force in theater["forces"]]]
+        if unassigned:
+            selected_forces = st.multiselect("Select Forces for Theater", unassigned)
+        else:
+            st.info("All forces are already assigned to theaters")
+            selected_forces = []
+    
+    if st.button("Create Theater", type="primary") and new_theater_name and selected_forces:
+        if new_theater_name not in theater_config["theaters"]:
+            theater_config["theaters"][new_theater_name] = {
+                "forces": selected_forces,
+                "created_date": str(datetime.now().date())
+            }
+            # Remove forces from unassigned list
+            theater_config["unassigned_forces"] = [f for f in theater_config["unassigned_forces"] if f not in selected_forces]
+            save_theater_config(project, theater_config)
+            st.success(f"Created theater '{new_theater_name}' with forces: {', '.join([f.capitalize() for f in selected_forces])}")
+            st.rerun()
+        else:
+            st.error("Theater name already exists")
+    
+    # Theater management section
+    if st.session_state.get("managing_theater"):
+        managing = st.session_state["managing_theater"]
+        if managing in theater_config["theaters"]:
+            st.markdown("---")
+            st.subheader(f"🔧 Managing Theater: {managing}")
+            
+            theater_data = theater_config["theaters"][managing]
+            current_forces = theater_data["forces"]
+            
+            # Show current forces in theater
+            st.write(f"**Current Forces in {managing}:**")
+            if current_forces:
+                force_cols = st.columns(len(current_forces))
+                for idx, force in enumerate(current_forces):
+                    with force_cols[idx]:
+                        color = FORCE_COLORS.get(force, "#64748b")
+                        st.markdown(f"""
+                        <div style="background:{color}; color:#fff; padding:0.5rem; 
+                                    border-radius:8px; text-align:center;">
+                            {force.capitalize()}
+                        </div>
+                        """, unsafe_allow_html=True)
+            
+            # Add/Remove forces
+            col_add, col_remove = st.columns(2)
+            
+            with col_add:
+                # Forces available to add
+                available_to_add = [f for f in available_forces if f not in current_forces]
+                if available_to_add:
+                    forces_to_add = st.multiselect("Add Forces", available_to_add, key=f"add_forces_{managing}")
+                    if st.button("Add Selected Forces", key=f"add_btn_{managing}") and forces_to_add:
+                        theater_config["theaters"][managing]["forces"].extend(forces_to_add)
+                        theater_config["unassigned_forces"] = [f for f in theater_config["unassigned_forces"] if f not in forces_to_add]
+                        save_theater_config(project, theater_config)
+                        st.success(f"Added forces to {managing}")
+                        st.rerun()
+            
+            with col_remove:
+                if current_forces:
+                    forces_to_remove = st.multiselect("Remove Forces", current_forces, key=f"remove_forces_{managing}")
+                    if st.button("Remove Selected Forces", key=f"remove_btn_{managing}") and forces_to_remove:
+                        theater_config["theaters"][managing]["forces"] = [f for f in current_forces if f not in forces_to_remove]
+                        theater_config["unassigned_forces"].extend(forces_to_remove)
+                        save_theater_config(project, theater_config)
+                        st.success(f"Removed forces from {managing}")
+                        st.rerun()
+            
+            if st.button("Done Managing", key=f"done_{managing}"):
+                del st.session_state["managing_theater"]
+                st.rerun()
+
 # --- Main Routing ---
 def main():
     global SIDES
@@ -2861,10 +3704,16 @@ def main():
         progress_entry_tab()
     elif selected == "Dashboard":
         dashboard_tab()
+    elif selected == "Force Progress Entry":
+        force_progress_entry_tab()
+    elif selected == "Force Dashboard":
+        force_dashboard_tab()
     elif selected == "Control Panel":
         control_panel_tab()
     elif selected == "Force Manager":
         force_manager_tab()
+    elif selected == "Theater Command":
+        theater_command_tab()
     elif selected == "Project Management":
         project_management()
     elif selected == "Logout":

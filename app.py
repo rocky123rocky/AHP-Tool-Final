@@ -233,6 +233,106 @@ def get_numeric_sort_key(item, field_name):
     except:
         return float('inf')
 
+# ==================== CHAT SYSTEM FUNCTIONS ====================
+def load_messages(project):
+    """Load all messages for a project"""
+    try:
+        messages_file = f"{project}_messages.json"
+        if os.path.exists(messages_file):
+            with open(messages_file, "r") as f:
+                return json.load(f)
+        else:
+            # Default structure
+            return {
+                "conversations": {},  # Format: {"control_to_blue": [...], "blue_to_control": [...]}
+                "last_updated": ""
+            }
+    except Exception as e:
+        st.error(f"Error loading messages: {str(e)}")
+        return {"conversations": {}, "last_updated": ""}
+
+def save_message(project, sender, recipient, message_text):
+    """Save a new message to the chat system"""
+    try:
+        # Load existing messages
+        messages_data = load_messages(project)
+        
+        # Create conversation key
+        conversation_key = f"{sender}_to_{recipient}"
+        
+        # Initialize conversation if it doesn't exist
+        if conversation_key not in messages_data["conversations"]:
+            messages_data["conversations"][conversation_key] = []
+        
+        # Create new message
+        new_message = {
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "sender": sender,
+            "recipient": recipient,
+            "message": message_text,
+            "message_id": len(messages_data["conversations"][conversation_key]) + 1
+        }
+        
+        # Add message to conversation
+        messages_data["conversations"][conversation_key].append(new_message)
+        messages_data["last_updated"] = new_message["timestamp"]
+        
+        # Save to file
+        messages_file = f"{project}_messages.json"
+        with open(messages_file, "w") as f:
+            json.dump(messages_data, f, indent=2)
+        
+        return True
+        
+    except Exception as e:
+        st.error(f"Error saving message: {str(e)}")
+        return False
+
+def get_conversation(project, participant1, participant2):
+    """Get all messages between two participants (bidirectional)"""
+    try:
+        messages_data = load_messages(project)
+        
+        # Get messages from both directions
+        conv1_key = f"{participant1}_to_{participant2}"
+        conv2_key = f"{participant2}_to_{participant1}"
+        
+        messages = []
+        
+        if conv1_key in messages_data["conversations"]:
+            messages.extend(messages_data["conversations"][conv1_key])
+        
+        if conv2_key in messages_data["conversations"]:
+            messages.extend(messages_data["conversations"][conv2_key])
+        
+        # Sort by timestamp
+        messages.sort(key=lambda x: x["timestamp"])
+        
+        return messages
+        
+    except Exception as e:
+        st.error(f"Error loading conversation: {str(e)}")
+        return []
+
+def get_force_conversations(project, force):
+    """Get all conversations for a specific force"""
+    try:
+        messages_data = load_messages(project)
+        force_messages = []
+        
+        for conv_key, messages in messages_data["conversations"].items():
+            if force in conv_key:
+                force_messages.extend(messages)
+        
+        # Sort by timestamp
+        force_messages.sort(key=lambda x: x["timestamp"], reverse=True)
+        
+        return force_messages
+        
+    except Exception as e:
+        st.error(f"Error loading force conversations: {str(e)}")
+        return []
+
 SIDES = load_forces()
 FORCE_COLORS = {
     "blue": "#1e3a8a",
@@ -960,6 +1060,7 @@ def sidebar():
             "✅ Tasks": "Tasks",
             "📊 Progress Entry": "Progress Entry",
             "📈 Dashboard": "Dashboard",
+            "💬 Chat": "Chat",
             "⚙️ Control Panel": "Control Panel",
             "👥 Force Manager": "Force Manager",
             "🏛️ Theater Command": "Theater Command",
@@ -975,6 +1076,7 @@ def sidebar():
             "⚖️ KO Method": "KO Method",
             "� Force Progress Entry": "Force Progress Entry",
             "📈 Force Dashboard": "Force Dashboard",
+            "💬 Chat": "Chat",
             "�🗂️ Project Management": "Project Management",
             "🚪 Logout": "Logout"
         }
@@ -1939,6 +2041,9 @@ def dp_comparison_tab(s, project, side, data):
     
     selected_objective = obj_options[selected_obj_display]
     
+    # Get the index of the selected objective
+    selected_obj_idx = obj_to_original_idx[id(selected_objective)]
+    
     # Find DPs for selected objective
     objective_name = selected_objective.get("Name", selected_objective.get("name", ""))
     obj_dps = [dp for dp in dps if dp.get("Objective", "") == objective_name]
@@ -2283,9 +2388,6 @@ def progress_entry_tab():
     st.header("📊 Progress Entry (Control Only)")
     st.markdown("*Update task progress and weights for all forces*")
     
-    # Control-specific information
-    st.info("ℹ️ **Control Master View**: This is Control's centralized progress tracking. Individual forces have their own independent progress tracking that doesn't affect this view.")
-    
     project = st.session_state.get("project")
     
     if not SIDES:
@@ -2317,38 +2419,6 @@ def show_force_progress_entry(project, force, independent=False):
         
     tasks = data.get("tasks", [])
     dps = data.get("dps", [])
-    
-    color = FORCE_COLORS.get(force, "#0f172a")
-    
-    # Force header
-    if independent:
-        header_title = f"{get_force_emoji(force)} My Force Progress Entry"
-        header_desc = "Independent task progress tracking and weight management"
-        st.markdown(f"""
-        <div style="background: linear-gradient(90deg, {color}, {color}88); 
-             padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid {color};">
-            <h3 style="color: white; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.7);">
-                {header_title}
-            </h3>
-            <p style="color: white; margin: 5px 0 0 0; opacity: 0.9;">
-                {header_desc}
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.info(f"ℹ️ **Independent Mode**: Your progress entries are saved separately from Control updates. This allows you to track your own progress without affecting Control's master tracking system.")
-    else:
-        st.markdown(f"""
-        <div style="background: linear-gradient(90deg, {color}, {color}88); 
-             padding: 15px; border-radius: 10px; margin-bottom: 20px; border-left: 5px solid {color};">
-            <h3 style="color: white; margin: 0; text-shadow: 2px 2px 4px rgba(0,0,0,0.7);">
-                {get_force_emoji(force)} {force.capitalize()} Force - Progress Update
-            </h3>
-            <p style="color: white; margin: 5px 0 0 0; opacity: 0.9;">
-                Update task weights and progress for strategic planning
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
     
     if not tasks:
         st.info(f"📝 No tasks found for {force} force. Please add tasks in the Tasks tab first.")
@@ -2382,7 +2452,7 @@ def show_force_progress_entry(project, force, independent=False):
     
     st.divider()
     
-    # Display tasks by DP with progress update interface - sort numerically by DP number
+    # DP Selection - Card-based interface
     def sort_dp_key(item):
         dp_no = item[0]
         try:
@@ -2390,154 +2460,340 @@ def show_force_progress_entry(project, force, independent=False):
         except:
             return float('inf')
     
-    for dp_no, dp_tasks in sorted(tasks_by_dp.items(), key=sort_dp_key):
-        # Find DP details
-        dp_name = "Unknown DP"
-        dp_objective = "Unknown Objective"
-        for dp in dps:
-            if str(dp.get("DP No", "") or dp.get("dp_no", "")) == str(dp_no):
-                dp_name = dp.get("Name", f"DP {dp_no}")
-                dp_objective = dp.get("Objective", "Unknown Objective")
-                break
-        
-        with st.expander(f"🎯 DP {dp_no}: {dp_name} │ {dp_objective} │ {len(dp_tasks)} Tasks", expanded=True):
-            if not dp_tasks:
-                st.info(f"No tasks found for DP {dp_no}")
-                continue
+    sorted_dps = sorted(tasks_by_dp.items(), key=sort_dp_key)
+    
+    if not sorted_dps:
+        st.info("No tasks available for progress entry")
+        return
+    
+    # Initialize selected DP in session state
+    if f"selected_dp_{force}" not in st.session_state:
+        st.session_state[f"selected_dp_{force}"] = sorted_dps[0][0]
+    
+    # Display DP cards for selection
+    st.markdown("### 🎯 Select Decisive Point")
+    
+    # Calculate number of columns based on number of DPs
+    num_dps = len(sorted_dps)
+    cols_per_row = min(3, num_dps)
+    
+    # Create DP selection cards
+    for row_start in range(0, num_dps, cols_per_row):
+        cols = st.columns(cols_per_row)
+        for idx, (dp_no, dp_tasks) in enumerate(sorted_dps[row_start:row_start+cols_per_row]):
+            # Find DP details
+            dp_name = "Unknown DP"
+            dp_objective = "Unknown Objective"
+            for dp in dps:
+                if str(dp.get("DP No", "") or dp.get("dp_no", "")) == str(dp_no):
+                    dp_name = dp.get("Name", f"DP {dp_no}")
+                    dp_objective = dp.get("Objective", "Unknown Objective")
+                    break
+            
+            # Calculate DP progress
+            dp_progress = sum(task.get("Progress", task.get("progress", 0)) or 0 for _, task in dp_tasks) / len(dp_tasks) if dp_tasks else 0
+            
+            # Check if this DP is selected
+            is_selected = st.session_state[f"selected_dp_{force}"] == dp_no
+            
+            with cols[idx]:
+                # Card styling based on selection
+                if is_selected:
+                    card_color = "#667eea"
+                    border_style = "border: 3px solid #4c51bf;"
+                else:
+                    card_color = "#6b7280"
+                    border_style = "border: 1px solid #d1d5db;"
                 
-            for task_idx, (original_idx, task) in enumerate(dp_tasks):
-                # Get task name with fallback
-                task_name = (task.get("description") or task.get("Desc") or task.get("Name") or 
-                           task.get("Task Name") or task.get("desc") or task.get("name") or 
-                           task.get("task name") or task.get("Task") or task.get("task") or
-                           task.get("Description") or f"Task {task.get('Task No', task_idx+1)}")
-                
-                # Task progress card
-                current_progress = task.get("Progress", task.get("progress", task.get("achieved", 0))) or 0
-                try:
-                    current_progress = float(str(current_progress).replace('%', '')) if current_progress else 0
-                except:
-                    current_progress = 0
-                    
-                task_color = "#38a169" if current_progress >= 75 else "#e53e3e" if current_progress < 25 else "#d69e2e"
-                
-                # Get task number for display
-                task_no = task.get("Task No", task_idx+1)
-                
+                # DP Card - show full name with text wrapping
                 st.markdown(f"""
-                <div style="background: {task_color}; color: white; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
-                    <h4 style="color: white; margin: 0;">🔹 Task {task_no}: {task_name}</h4>
-                    <p style="margin: 5px 0 0 0; opacity: 0.9;">Current Progress: {current_progress:.1f}%</p>
+                <div style="background: {card_color}; {border_style}
+                     padding: 15px; border-radius: 10px; margin-bottom: 10px; cursor: pointer;
+                     box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: all 0.3s; min-height: 120px;">
+                    <h4 style="color: white; margin: 0; font-size: 16px;">🎯 DP {dp_no}</h4>
+                    <p style="color: white; opacity: 0.9; margin: 8px 0; font-size: 13px; 
+                       word-wrap: break-word; overflow-wrap: break-word;">{dp_name}</p>
+                    <p style="color: white; opacity: 0.8; margin: 5px 0 0 0; font-size: 12px;">
+                        📋 {len(dp_tasks)} tasks | 📈 {int(dp_progress)}%
+                    </p>
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # Two-column layout for progress interface
-                col1, col2 = st.columns([1, 1])
+                if st.button(f"Select DP {dp_no}", key=f"select_dp_{dp_no}_{force}", use_container_width=True):
+                    st.session_state[f"selected_dp_{force}"] = dp_no
+                    st.rerun()
+    
+    st.divider()
+    
+    # Display selected DP with all tasks
+    selected_dp_no = st.session_state[f"selected_dp_{force}"]
+    dp_tasks = tasks_by_dp[selected_dp_no]
+    
+    # Find DP details
+    dp_name = "Unknown DP"
+    dp_objective = "Unknown Objective"
+    for dp in dps:
+        if str(dp.get("DP No", "") or dp.get("dp_no", "")) == str(selected_dp_no):
+            dp_name = dp.get("Name", f"DP {selected_dp_no}")
+            dp_objective = dp.get("Objective", "Unknown Objective")
+            break
+    
+    # DP Header
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+         padding: 20px; border-radius: 10px; margin: 20px 0; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h3 style="color: white; margin: 0;">🎯 DP {selected_dp_no}: {dp_name}</h3>
+        <p style="color: white; opacity: 0.9; margin: 8px 0 0 0;">📌 {dp_objective}</p>
+        <p style="color: white; opacity: 0.8; margin: 8px 0 0 0; font-size: 14px;">Tasks: {len(dp_tasks)}</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Display all tasks for this DP
+    for task_idx, (original_idx, task) in enumerate(dp_tasks):
+        # Get task name and details
+        task_name = (task.get("description") or task.get("Desc") or task.get("Name") or 
+                   task.get("Task Name") or task.get("desc") or task.get("name") or 
+                   task.get("task name") or task.get("Task") or task.get("task") or
+                   task.get("Description") or f"Task {task.get('Task No', task_idx+1)}")
+        
+        # Get current progress
+        current_progress = task.get("Progress", task.get("progress", task.get("achieved", 0))) or 0
+        try:
+            current_progress = float(str(current_progress).replace('%', ''))
+        except:
+            current_progress = 0
+        
+        task_no = task.get("Task No", task_idx+1)
+        
+        # Current values with proper handling
+        current_weight = task.get("stated") or task.get("Weight") or task.get("weight") or task.get("Wt") or task.get("wt") or 0
+        
+        # Handle string percentages
+        try:
+            current_weight = float(str(current_weight).replace('%', ''))
+        except:
+            current_weight = 0
+        
+        # Progress update controls
+        unique_key = f"progress_{force}_{selected_dp_no}_{original_idx}"
+        
+        # Initialize session state for synchronized inputs if not exists
+        if f"weight_val_{unique_key}" not in st.session_state:
+            st.session_state[f"weight_val_{unique_key}"] = int(round(current_weight))
+        if f"progress_val_{unique_key}" not in st.session_state:
+            st.session_state[f"progress_val_{unique_key}"] = int(round(current_progress))
+        
+        # Get live progress value from session state
+        live_progress = st.session_state[f"progress_val_{unique_key}"]
+        
+        # Task header with LIVE progress value
+        task_color = "#38a169" if live_progress >= 75 else "#e53e3e" if live_progress < 25 else "#d69e2e"
+        st.markdown(f"""
+        <div style="background: {task_color}; color: white; padding: 15px; border-radius: 8px; margin: 20px 0;">
+            <h4 style="color: white; margin: 0;">🔹 Task {task_no}: {task_name}</h4>
+            <p style="margin: 5px 0 0 0; opacity: 0.9;">Current Progress: {live_progress}%</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Two-column layout for task editing
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.markdown("**📊 Progress Controls**")
+            
+            # Weight input with slider and number input (synchronized)
+            st.markdown("**Task Weight (%)**")
+            weight_col1, weight_col2 = st.columns([3, 1])
+            with weight_col1:
+                new_weight = st.slider(
+                    "Weight Slider", 
+                    0, 
+                    100, 
+                    st.session_state[f"weight_val_{unique_key}"],
+                    step=1,
+                    key=f"weight_slider_{unique_key}",
+                    label_visibility="collapsed",
+                    help="Strategic importance of this task (doesn't need to sum to 100% - relative proportions matter)"
+                )
+                    
+            with weight_col2:
+                weight_input = st.number_input(
+                    "Weight Value",
+                    min_value=0,
+                    max_value=100,
+                    value=new_weight,
+                    step=1,
+                    key=f"weight_input_{unique_key}",
+                    label_visibility="collapsed",
+                    help="Enter exact value"
+                )
+            
+            # Update session state value
+            if weight_input != new_weight:
+                new_weight = weight_input
+            st.session_state[f"weight_val_{unique_key}"] = new_weight
+            
+            # Progress input with slider and number input (synchronized)
+            st.markdown("**Progress Achieved (%)**")
+            progress_col1, progress_col2 = st.columns([3, 1])
+            with progress_col1:
+                new_progress = st.slider(
+                    "Progress Slider", 
+                    0, 
+                    100, 
+                    st.session_state[f"progress_val_{unique_key}"],
+                    step=1,
+                    key=f"progress_slider_{unique_key}",
+                    label_visibility="collapsed",
+                    help="Actual completion percentage"
+                )
+                    
+            with progress_col2:
+                progress_input = st.number_input(
+                    "Progress Value",
+                    min_value=0,
+                    max_value=100,
+                    value=new_progress,
+                    step=1,
+                    key=f"progress_input_{unique_key}",
+                    label_visibility="collapsed",
+                    help="Enter exact value"
+                )
+            
+            # Update session state value
+            if progress_input != new_progress:
+                new_progress = progress_input
+            st.session_state[f"progress_val_{unique_key}"] = new_progress
+            
+            # Progress comment/notes
+            current_comment = task.get("Progress Comment", task.get("progress_comment", ""))
+            progress_comment = st.text_area(
+                "Progress Notes (Optional)",
+                value=current_comment,
+                key=f"comment_{unique_key}",
+                height=80,
+                help="Add notes explaining the progress update for future reference",
+                placeholder="e.g., 'Completed initial planning phase, waiting for resources...'"
+            )
+            
+            # Additional intangible assessment
+            intangible = st.selectbox(
+                "Intangible Assessment",
+                ["nil", "partial", "complete"],
+                index=["nil", "partial", "complete"].index(task.get("Intangible", "nil")),
+                key=f"intangible_{unique_key}",
+                help="Qualitative assessment beyond measurable progress"
+            )
+            
+            # AUTO-SAVE: Check if values have changed from saved values
+            saved_weight = int(round(float(str(task.get("Weight", task.get("weight", 0))).replace('%', ''))))
+            saved_progress = int(round(float(str(task.get("Progress", task.get("progress", 0))).replace('%', ''))))
+            saved_intangible = task.get("Intangible", "nil")
+            saved_comment = task.get("Progress Comment", task.get("progress_comment", ""))
+            
+            # If any value changed, auto-save
+            if (new_weight != saved_weight or new_progress != saved_progress or 
+                intangible != saved_intangible or progress_comment != saved_comment):
                 
-                with col1:
-                    st.markdown("**📊 Progress Controls**")
-                    
-                    # Current values with proper handling
-                    current_weight = task.get("stated") or task.get("Weight") or task.get("weight") or task.get("Wt") or task.get("wt") or 0
-                    
-                    # Handle string percentages
-                    try:
-                        current_weight = float(str(current_weight).replace('%', '')) if current_weight else 0
-                    except:
-                        current_weight = 0
-                    
-                    # Progress update controls
-                    unique_key = f"progress_{force}_{dp_no}_{original_idx}"
-                    
-                    new_weight = st.slider(
-                        "Task Weight (%)", 
-                        0.0, 100.0, 
-                        float(current_weight), 
-                        step=0.1,
-                        key=f"weight_{unique_key}",
-                        help="Strategic importance and priority of this task"
-                    )
-                    
-                    new_progress = st.slider(
-                        "Progress Achieved (%)", 
-                        0.0, 100.0, 
-                        float(current_progress), 
-                        step=0.1,
-                        key=f"progress_{unique_key}",
-                        help="Actual completion percentage"
-                    )
-                    
-                    # Additional intangible assessment
-                    intangible = st.selectbox(
-                        "Intangible Assessment",
-                        ["nil", "partial", "complete"],
-                        index=["nil", "partial", "complete"].index(task.get("Intangible", "nil")),
-                        key=f"intangible_{unique_key}",
-                        help="Qualitative assessment beyond measurable progress"
-                    )
+                # Update task with new values (as whole numbers)
+                tasks[original_idx]["Weight"] = new_weight
+                tasks[original_idx]["weight"] = new_weight
+                tasks[original_idx]["stated"] = new_weight
+                tasks[original_idx]["Stated %"] = new_weight
                 
-                with col2:
-                    st.markdown("**📝 Task Information**")
-                    
-                    # Task details in organized format
-                    st.markdown(f"""
-                    **Current Metrics:**
-                    - Weight: {current_weight}%
-                    - Progress: {current_progress}%
-                    - Assessment: {task.get('Intangible', 'nil').capitalize()}
-                    
-                    **Task Details:**
-                    - Force Group: {task.get('Force Group', 'Not specified')}
-                    - Type: {task.get('Type', 'Not specified')}
-                    - Criteria: {task.get('Criteria', 'Not specified')}
-                    """)
-                    
-                    # Update button
-                    if st.button(f"💾 Update Progress", key=f"save_{unique_key}", type="primary"):
-                        # Update task with new values
-                        updated_task = tasks[original_idx].copy()
-                        
-                        # Update multiple key formats for compatibility
-                        updated_task["Weight"] = new_weight
-                        updated_task["weight"] = new_weight
-                        updated_task["stated"] = new_weight
-                        updated_task["Stated %"] = new_weight
-                        
-                        updated_task["Progress"] = new_progress
-                        updated_task["progress"] = new_progress
-                        updated_task["achieved"] = new_progress
-                        updated_task["Achieved %"] = new_progress
-                        updated_task["Progress %"] = new_progress
-                        
-                        updated_task["Intangible"] = intangible
-                        
-                        # Save updated task
-                        tasks[original_idx] = updated_task
-                        data["tasks"] = tasks
-                        
-                        # Save using appropriate method based on mode
-                        if independent:
-                            save_independent_project(project, force, data)
-                        else:
-                            save_project(project, force, data)
-                        
-                        st.success(f"✅ Task '{task_name}' progress updated successfully!")
-                        st.balloons()
-                        st.rerun()
+                tasks[original_idx]["Progress"] = new_progress
+                tasks[original_idx]["progress"] = new_progress
+                tasks[original_idx]["achieved"] = new_progress
+                tasks[original_idx]["Achieved %"] = new_progress
+                tasks[original_idx]["Progress %"] = new_progress
                 
-                st.divider()
+                tasks[original_idx]["Intangible"] = intangible
+                
+                # Save progress comment
+                tasks[original_idx]["Progress Comment"] = progress_comment
+                tasks[original_idx]["progress_comment"] = progress_comment
+                
+                # Save to file
+                data["tasks"] = tasks
+                if independent:
+                    save_independent_project(project, force, data)
+                else:
+                    save_project(project, force, data)
+        
+        with col2:
+            st.markdown("**📝 Task Information**")
+            
+            # Get task type and display full name
+            task_type = task.get('Type', 'Not specified')
+            if task_type == 'T':
+                task_type_display = 'Tangible'
+            elif task_type == 'I':
+                task_type_display = 'Intangible'
+            else:
+                task_type_display = task_type
+            
+            # Task details in organized format - using LIVE values from session state
+            st.markdown(f"""
+            **Current Metrics:**
+            - Weight: {new_weight}%
+            - Progress: {new_progress}%
+            - Assessment: {intangible.capitalize()}
+            
+            **Task Details:**
+            - Force Group: {task.get('Force Group', 'Not specified')}
+            - Type: {task_type_display}
+            - Criteria: {task.get('Criteria', 'Not specified')}
+            """)
+            
+            # Show current progress comment if exists
+            if progress_comment:
+                st.markdown(f"**Progress Notes:**")
+                st.info(progress_comment)
+            
+            # Auto-save indicator
+            if (new_weight != saved_weight or new_progress != saved_progress or 
+                intangible != saved_intangible or progress_comment != saved_comment):
+                st.success("✅ Auto-saved")
+        
+        st.divider()
+    
+    # Calculate REAL-TIME total weightage for this DP using session state values
+    dp_total_weight = 0
+    for task_idx, (original_idx, task_data) in enumerate(dp_tasks):
+        unique_key = f"progress_{force}_{selected_dp_no}_{original_idx}"
+        # Use session state value if exists, otherwise use saved value
+        if f"weight_val_{unique_key}" in st.session_state:
+            dp_total_weight += st.session_state[f"weight_val_{unique_key}"]
+        else:
+            saved_weight = float(str(task_data.get("Weight", task_data.get("weight", 0))).replace('%', ''))
+            dp_total_weight += saved_weight
+    
+    dp_total_weight = int(round(dp_total_weight))
+    
+    st.markdown("### 📊 Total Task Weightage Summary")
+    
+    # Visual progress bar for total weight
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if dp_total_weight < 100:
+            st.progress(dp_total_weight / 100.0, text=f"Total Weightage: {dp_total_weight}%")
+            st.info("ℹ️ Note: Weightage doesn't need to equal 100% - relative proportions are what matter mathematically")
+        elif dp_total_weight > 100:
+            st.progress(1.0, text=f"Total Weightage: {dp_total_weight}%")
+            st.warning(f"⚠️ Total weightage is {dp_total_weight}% (more than 100%)")
+        else:
+            st.progress(1.0, text=f"Total Weightage: {dp_total_weight}%")
+            st.success("✅ Total weightage equals 100%")
+    with col2:
+        st.metric("Total", f"{dp_total_weight}%")
 
 # --- Dashboard Tab (Control Only) ---
 def dashboard_tab():
     st.header("📊 Control Dashboard")
     st.markdown("*Real-time operational status and progress monitoring for all forces*")
     
-    # Control-specific information
-    st.info("ℹ️ **Control Master View**: This dashboard shows Control's centralized data. Individual forces have independent dashboards showing their own progress tracking.")
-    
     project = st.session_state.get("project")
     rag = st.session_state.get("rag", {"red": 40, "amber": 70})
-    
     if not SIDES:
         st.warning("⚠️ No forces configured yet. Please use Force Manager to add forces first.")
         return
@@ -2549,17 +2805,173 @@ def dashboard_tab():
         show_force_dashboard(force, project, rag)
     else:
         # Multiple forces - create tabs
-        tab_names = ["📈 Overview"] + [f"{get_force_emoji(side)} {side.capitalize()}" for side in SIDES]
+        tab_names = [" Control Overview", " Force Monitoring"] + [f"{get_force_emoji(side)} {side.capitalize()}" for side in SIDES]
         tabs = st.tabs(tab_names)
         
         # Overview tab
         with tabs[0]:
             show_overview_dashboard(project, rag)
+
+        # Force Independent Monitoring tab (Forces' independent progress)
+        with tabs[1]:
+            show_force_monitoring_dashboard(project, rag)
         
-        # Individual force tabs
+        
+        
+                # Individual force tabs
         for i, side in enumerate(SIDES):
-            with tabs[i + 1]:
+            with tabs[i + 2]:
                 show_force_dashboard(side, project, rag)
+
+# --- Chat Tab ---
+def chat_tab():
+    """Dedicated chat interface in navigation panel"""
+    project = st.session_state.get("project")
+    role = st.session_state.get("role", "control")
+    
+    if not project:
+        st.warning("⚠️ Please select a project first from Project Management")
+        return
+    
+    st.header("💬 Chat")
+    
+    if role == "control":
+        # Control Chat Interface
+        st.markdown("*Command Control - Force Chat Center*")
+        st.markdown("---")
+        
+        # Select force to communicate with
+        selected_force = st.selectbox("Select Force to Communicate With:", SIDES, key="comm_force_select")
+        
+        if selected_force:
+            # Display conversation with selected force
+            st.markdown(f"### 📨 Conversation with {selected_force.capitalize()}")
+            
+            # Get conversation history
+            conversation = get_conversation(project, "control", selected_force)
+            
+            # Display messages in a chat-like interface
+            if conversation:
+                chat_container = st.container()
+                with chat_container:
+                    for message in conversation[-15:]:  # Show last 15 messages
+                        is_control = message["sender"] == "control"
+                        alignment = "flex-end" if is_control else "flex-start"
+                        bg_color = "#e3f2fd" if is_control else "#f5f5f5"
+                        sender_icon = "🎯" if is_control else get_force_emoji(message["sender"])
+                        
+                        st.markdown(f"""
+                        <div style="display: flex; justify-content: {alignment}; margin: 10px 0;">
+                            <div style="background: {bg_color}; padding: 10px 15px; border-radius: 15px; 
+                                        max-width: 70%; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                                <div style="font-size: 0.8em; color: #666; margin-bottom: 5px;">
+                                    {sender_icon} {message["sender"].title()} - {message["timestamp"]}
+                                </div>
+                                <div style="color: #333;">
+                                    {message["message"]}
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.info(f"No messages yet with {selected_force.capitalize()}")
+            
+            # Send new message
+            st.markdown("### ✍️ Send Message")
+            with st.form(f"send_message_comm_tab_{selected_force}"):
+                message_text = st.text_area("Type your message:", key=f"comm_control_message_{selected_force}", height=100)
+                col1, col2 = st.columns([4, 1])
+                with col2:
+                    send_button = st.form_submit_button("📤 Send", use_container_width=True)
+                
+                if send_button and message_text.strip():
+                    if save_message(project, "control", selected_force, message_text.strip()):
+                        st.success(f"✅ Message sent to {selected_force.capitalize()}!")
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to send message. Please try again.")
+        
+        # Show recent queries from all forces
+        st.markdown("---")
+        st.markdown("### 📥 Recent Force Queries")
+        all_messages = []
+        for force in SIDES:
+            force_messages = get_conversation(project, force, "control")
+            all_messages.extend([msg for msg in force_messages if msg["sender"] != "control"])
+        
+        # Sort by timestamp (most recent first)
+        all_messages.sort(key=lambda x: x["timestamp"], reverse=True)
+        
+        if all_messages:
+            for message in all_messages[:8]:  # Show last 8 queries
+                force_color = FORCE_COLORS.get(message["sender"], "#64748b")
+                st.markdown(f"""
+                <div style="background: {force_color}10; border-left: 4px solid {force_color}; 
+                            padding: 12px; margin: 10px 0; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                    <div style="font-weight: bold; color: {force_color}; font-size: 1.05em;">
+                        {get_force_emoji(message["sender"])} {message["sender"].capitalize()} - {message["timestamp"]}
+                    </div>
+                    <div style="margin-top: 6px; color: #333;">
+                        {message["message"]}
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("📭 No recent queries from forces")
+    
+    else:
+        # Force Chat Interface
+        force = st.session_state.get("role")  # Force name is stored in role
+        if not force or force == "control":
+            st.error("❌ Unable to determine force identity")
+            return
+            
+        st.markdown(f"*{get_force_emoji(force)} {force.capitalize()} Force - Communication with Control*")
+        st.markdown("---")
+        
+        # Display conversation with Control
+        st.markdown("### 📨 Conversation with Command Control")
+        conversation = get_conversation(project, force, "control")
+        
+        if conversation:
+            chat_container = st.container()
+            with chat_container:
+                for message in conversation[-15:]:  # Show last 15 messages
+                    is_control = message["sender"] == "control"
+                    alignment = "flex-start" if is_control else "flex-end"
+                    bg_color = "#e3f2fd" if is_control else "#f5f5f5"
+                    sender_icon = "🎯" if is_control else get_force_emoji(force)
+                    
+                    st.markdown(f"""
+                    <div style="display: flex; justify-content: {alignment}; margin: 10px 0;">
+                        <div style="background: {bg_color}; padding: 10px 15px; border-radius: 15px; 
+                                    max-width: 80%; border: 1px solid #ddd; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                            <div style="font-size: 0.8em; color: #666; margin-bottom: 5px;">
+                                {sender_icon} {message["sender"].title()} - {message["timestamp"]}
+                            </div>
+                            <div style="color: #333;">
+                                {message["message"]}
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+        else:
+            st.info("📭 No messages yet with Control")
+        
+        # Send message to Control
+        st.markdown("### ✍️ Send Query to Control")
+        with st.form(f"send_query_comm_tab_{force}"):
+            message_text = st.text_area("Type your query or message:", key=f"comm_force_message_{force}", height=100)
+            col1, col2 = st.columns([4, 1])
+            with col2:
+                send_button = st.form_submit_button("📤 Send", use_container_width=True)
+            
+            if send_button and message_text.strip():
+                if save_message(project, force, "control", message_text.strip()):
+                    st.success("✅ Message sent to Control!")
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to send message. Please try again.")
 
 def get_force_emoji(force_name):
     """Get appropriate emoji for force"""
@@ -2571,10 +2983,9 @@ def get_force_emoji(force_name):
 
 def show_overview_dashboard(project, rag):
     """Show high-level overview of all forces"""
-    
-    # Create tabs for different progress types
+
     dp_tab, phase_tab, obj_tab, theater_tab = st.tabs(["🎯 DP Progress", "⏱️ Phase Progress", "🎖️ Objective Progress", "🏛️ Theater Progress"])
-    
+
     # DP Progress Tab
     with dp_tab:
         st.subheader("🎯 All Forces DP Summary")
@@ -2678,7 +3089,7 @@ def show_overview_dashboard(project, rag):
     # Objective Progress Tab
     with obj_tab:
         st.subheader("🎖️ All Forces Objective Summary")
-        st.markdown("*Quick overview of Objective achievement status across all forces*")
+        st.markdown("*Quick overview of Objective execution status across all forces*")
         
         # Force status cards for Objectives
         cols = st.columns(min(len(SIDES), 4))  # Max 4 columns
@@ -2727,117 +3138,376 @@ def show_overview_dashboard(project, rag):
     
     # Theater Progress Tab
     with theater_tab:
-        st.subheader("🏛️ Theater Command Overview")
-        st.markdown("*Theater-level progress showing average performance of grouped forces*")
+        # Show the same data as Theater Command tab
+        st.subheader("🏛️ Theater Command Progress")
+        st.markdown("*Theater commands and combined force progress (same as Theater Command tab)*")
         
-        # Load theater configuration
-        theater_config = load_theater_config(project)
-        
-        if not theater_config["theaters"]:
-            st.info("🏛️ No theaters configured yet. Use Theater Command to create theater groupings.")
+        if not project:
+            st.error("Please select a project first")
         else:
-            # Display theater progress
-            theater_cols = st.columns(min(len(theater_config["theaters"]), 3))  # Max 3 theater columns
+            # Load theater configuration
+            theater_config = load_theater_config(project)
             
-            for idx, (theater_name, theater_data) in enumerate(theater_config["theaters"].items()):
-                with theater_cols[idx % len(theater_cols)]:
-                    # Calculate theater progress
-                    theater_progress = calculate_theater_progress(project, theater_data["forces"])
-                    
-                    # Progress color coding for theaters
-                    if theater_progress < rag["red"]:
-                        theater_color = "#ef4444"
-                        status_emoji = "🔴"
-                        status_text = "Low Progress"
-                    elif theater_progress < rag["amber"]:
-                        theater_color = "#f59e0b"
-                        status_emoji = "🟡"
-                        status_text = "Moderate Progress"
-                    else:
-                        theater_color = "#10b981"
-                        status_emoji = "🟢"
-                        status_text = "Good Progress"
-                    
-                    # Theater progress card
-                    st.markdown(f"""
-                    <div style="background: linear-gradient(135deg, {theater_color}20, {theater_color}05); 
-                                border: 2px solid {theater_color}40; border-radius: 15px; padding: 20px; margin-bottom: 15px;">
-                        <div style="text-align: center;">
-                            <h3 style="margin: 0; color: white; text-shadow: none;">🏛️ {theater_name}</h3>
-                            <h1 style="margin: 10px 0; color: {theater_color}; font-size: 3rem; text-shadow: none;">{theater_progress:.1f}%</h1>
-                            <p style="margin: 5px 0; color: white; font-weight: bold; text-shadow: none;">{status_emoji} {status_text}</p>
-                            <p style="margin: 0; color: #e5e7eb; font-size: 0.9rem; text-shadow: none;">
-                                Forces: {len(theater_data["forces"])}<br>
-                                {", ".join([f.capitalize() for f in theater_data["forces"]])}
-                            </p>
+            if theater_config["theaters"]:
+                # Display theater status (same as Theater Command tab)
+                theater_names = list(theater_config["theaters"].keys())
+                if theater_names:
+                    cols = st.columns(len(theater_names))
+                    for idx, (theater_name, theater_data) in enumerate(theater_config["theaters"].items()):
+                        with cols[idx]:
+                            # Calculate theater progress
+                            theater_progress = calculate_theater_progress(project, theater_data["forces"])
+                            
+                            # Progress color coding
+                            progress_color = "#ef4444" if theater_progress < 30 else "#f59e0b" if theater_progress < 70 else "#10b981"
+                            
+                            st.markdown(f"""
+                            <div style="background:linear-gradient(135deg, {progress_color}15, {progress_color}05); 
+                                        border:1px solid {progress_color}40; border-radius:12px; padding:1rem; margin-bottom:1rem;">
+                                <h4 style="color:{progress_color}; margin:0; text-align:center; font-weight:600;">🏛️ {theater_name}</h4>
+                                <div style="text-align:center; margin:0.5rem 0;">
+                                    <span style="font-size:2rem; font-weight:bold; color:{progress_color};">{theater_progress:.1f}%</span><br>
+                                    <span style="color:#666; font-size:0.9rem;">Average Progress</span>
+                                </div>
+                                <div style="color:#666; font-size:0.85rem; text-align:center;">
+                                    Forces: {len(theater_data["forces"])}<br>
+                                    {", ".join([f.capitalize() for f in theater_data["forces"]])}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+            else:
+                st.info("ℹ️ No theaters configured yet. Go to Theater Command tab to create theaters.")
+                
+            # Show unassigned forces if any
+            if theater_config.get("unassigned_forces"):
+                st.markdown("### 🔄 Unassigned Forces")
+                unassigned_cols = st.columns(len(theater_config["unassigned_forces"]))
+                for idx, force in enumerate(theater_config["unassigned_forces"]):
+                    with unassigned_cols[idx]:
+                        color = FORCE_COLORS.get(force, "#64748b")
+                        st.markdown(f"""
+                        <div style="background:{color}20; border:1px solid {color}60; 
+                                    border-radius:8px; padding:0.5rem; text-align:center; color:{color};">
+                            <strong>{force.capitalize()}</strong>
                         </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Show individual force progress within theater
-                    st.markdown(f"**Force Breakdown in {theater_name}:**")
-                    for force in theater_data["forces"]:
-                        try:
-                            force_data = load_independent_project(project, force)
-                            if force_data and "objective" in force_data:
-                                objectives = force_data["objective"]
-                                if objectives:
-                                    force_progress = sum(obj.get("Progress", 0) for obj in objectives) / len(objectives)
-                                    force_color = FORCE_COLORS.get(force, "#64748b")
-                                    
-                                    # Force progress indicator
-                                    if force_progress < rag["red"]:
-                                        force_status = "🔴"
-                                    elif force_progress < rag["amber"]:
-                                        force_status = "🟡"
-                                    else:
-                                        force_status = "🟢"
-                                    
-                                    st.markdown(f"""
-                                    <div style="background: {force_color}15; border-left: 4px solid {force_color}; 
-                                                padding: 8px; margin: 5px 0; border-radius: 5px;">
-                                        <span style="color: {force_color}; font-weight: bold;">{get_force_emoji(force)} {force.capitalize()}</span>
-                                        <span style="float: right;">{force_status} {force_progress:.1f}%</span>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                        except Exception as e:
-                            st.markdown(f"<small style='color: #ef4444;'>Error loading {force}: {str(e)}</small>", unsafe_allow_html=True)
-            
-            # Overall theater statistics
-            if len(theater_config["theaters"]) > 1:
-                st.markdown("---")
-                st.subheader("📊 Theater Command Summary")
-                
-                # Calculate overall theater metrics
-                theater_progresses = []
-                total_forces_in_theaters = 0
-                
-                for theater_data in theater_config["theaters"].values():
-                    theater_prog = calculate_theater_progress(project, theater_data["forces"])
-                    theater_progresses.append(theater_prog)
-                    total_forces_in_theaters += len(theater_data["forces"])
-                
-                if theater_progresses:
-                    avg_theater_progress = sum(theater_progresses) / len(theater_progresses)
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    with col1:
-                        st.metric("🏛️ Active Theaters", len(theater_config["theaters"]))
-                    with col2:
-                        st.metric("⚔️ Forces in Theaters", total_forces_in_theaters)
-                    with col3:
-                        st.metric("🎯 Average Theater Progress", f"{avg_theater_progress:.1f}%")
-                    with col4:
-                        unassigned_count = len(theater_config.get("unassigned_forces", []))
-                        st.metric("🔄 Unassigned Forces", unassigned_count)
-        
-        # Show unassigned forces if any
-        if theater_config.get("unassigned_forces"):
-            st.markdown("---")
-            st.subheader("🔄 Unassigned Forces")
-            st.info(f"Forces not assigned to any theater: {', '.join([f.capitalize() for f in theater_config['unassigned_forces']])}")
-            st.markdown("*Use Theater Command to assign these forces to theaters.*")
+                        """, unsafe_allow_html=True)
 
+
+                
+                # RAG status breakdown
+                st.markdown("**Status Breakdown:**")
+                if green_count > 0:
+                    st.markdown(f"� {green_count} Green")
+                if amber_count > 0:
+                    st.markdown(f"🟡 {amber_count} Amber") 
+                if red_count > 0:
+                    st.markdown(f"🔴 {red_count} Red")
+
+
+def show_force_monitoring_dashboard(project, rag):
+    """Show Control's monitoring view of forces' independent progress assessments"""
+    st.subheader(" Force Independent Progress Monitoring")
+    st.markdown("*Monitor progress assessments as reported by individual forces (independent tracking)*")
+    
+    # Create tabs for different progress types
+    dp_tab, phase_tab, obj_tab = st.tabs([" DP Progress (Forces)", " Phase Progress (Forces)", " Objective Progress (Forces)"])
+    
+    # DP Progress Tab - Force Independent View
+    with dp_tab:
+        st.subheader(" Forces' DP Assessment Summary")
+        st.markdown("*Decision Point progress as assessed by each force*")
+        
+        # Force status cards for DP (using independent data)
+        cols = st.columns(min(len(SIDES), 4))  # Max 4 columns
+        
+        for idx, side in enumerate(SIDES):
+            # Load independent force data (what forces are reporting)
+            independent_data = load_independent_project(project, side)
+            if not independent_data:
+                independent_data = load_project(project, side)  # Fallback to base data
+            
+            progress = compute_progress(independent_data)
+            
+            with cols[idx % len(cols)]:
+                color = FORCE_COLORS.get(side, "#8b5cf6")
+                
+                # Calculate DP summary from force's independent assessment
+                dp_progress = list(progress["dp"].values()) if progress["dp"] else [0]
+                avg_progress = sum(dp_progress) / len(dp_progress) if dp_progress else 0
+                
+                # Count RAG status
+                red_count = sum(1 for v in dp_progress if v < rag["red"])
+                amber_count = sum(1 for v in dp_progress if rag["red"] <= v < rag["amber"])
+                green_count = sum(1 for v in dp_progress if v >= rag["amber"])
+                
+                # Force status card with indicator of independent assessment
+                st.markdown(f"""
+                <div style="background: {color}; color: white; padding: 16px; border-radius: 10px; margin-bottom: 10px; border: 2px solid #fbbf24;">
+                    <h4 style="margin: 0; color: white;">{get_force_emoji(side)} {side.capitalize()}</h4>
+                    <h2 style="margin: 5px 0; color: white;">{avg_progress:.1f}%</h2>
+                    <p style="margin: 0; color: white; opacity: 0.9;">DP Progress</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # RAG status breakdown
+                st.markdown("**Force''s Assessment:**")
+                if green_count > 0:
+                    st.markdown(f" {green_count} Good Progress")
+                if amber_count > 0:
+                    st.markdown(f" {amber_count} Moderate Progress") 
+                if red_count > 0:
+                    st.markdown(f" {red_count} Low Progress")
+        
+        # DP Comparison Section
+        st.markdown("---")
+        st.subheader("🔍 Control vs Force DP Assessment Comparison")
+        st.markdown("*Compare Control's master data with Force's independent DP assessments*")
+        
+        cols = st.columns(min(len(SIDES), 2))  # Max 2 columns for better comparison view
+        
+        for idx, side in enumerate(SIDES):
+            # Load Control's master data
+            control_data = load_project(project, side)
+            control_progress = compute_progress(control_data)
+            
+            # Load Force's independent assessment
+            force_data = load_independent_project(project, side)
+            if not force_data:
+                force_data = load_project(project, side)
+            force_progress = compute_progress(force_data)
+            
+            with cols[idx % len(cols)]:
+                # Calculate Control's DP average
+                if control_progress.get("dp"):
+                    control_dp_avg = sum(control_progress["dp"].values()) / len(control_progress["dp"].values())
+                else:
+                    control_dp_avg = 0
+                
+                # Calculate Force's DP average
+                if force_progress.get("dp"):
+                    force_dp_avg = sum(force_progress["dp"].values()) / len(force_progress["dp"].values())
+                else:
+                    force_dp_avg = 0
+                
+                # Comparison indicator
+                diff = force_dp_avg - control_dp_avg
+                if abs(diff) <= 1:
+                    status_color = "#10b981"
+                    status_text = "🔄 Aligned"
+                elif diff > 1:
+                    status_color = "#f59e0b"
+                    status_text = "📈 Force Higher"
+                else:
+                    status_color = "#ef4444"
+                    status_text = "📉 Force Lower"
+                
+                st.markdown(f"""
+                <div style="background: {status_color}20; border: 1px solid {status_color}40; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                    <h5 style="margin: 0; color: {status_color};">{get_force_emoji(side)} {side.capitalize()}</h5>
+                    <p style="margin: 2px 0; font-size: 0.9rem;">Control View: {control_dp_avg:.1f}%</p>
+                    <p style="margin: 2px 0; font-size: 0.9rem;">Force Assessment: {force_dp_avg:.1f}%</p>
+                    <p style="margin: 2px 0; font-weight: bold; color: {status_color};">{status_text}</p>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    # Phase Progress Tab - Force Independent View
+    with phase_tab:
+        st.subheader("⏱️ Forces' Phase Assessment Summary")
+        st.markdown("*Phase progress as assessed by each force*")
+        
+        # Force status cards for Phase (using independent data)
+        cols = st.columns(min(len(SIDES), 4))  # Max 4 columns
+        
+        for idx, side in enumerate(SIDES):
+            # Load independent force data (what forces are reporting)
+            independent_data = load_independent_project(project, side)
+            if not independent_data:
+                independent_data = load_project(project, side)  # Fallback to base data
+            
+            progress = compute_progress(independent_data)
+            
+            with cols[idx % len(cols)]:
+                color = FORCE_COLORS.get(side, "#8b5cf6")
+                
+                # Calculate Phase summary from force's independent assessment
+                phase_progress = list(progress["phase"].values()) if progress["phase"] else [0]
+                avg_progress = sum(phase_progress) / len(phase_progress) if phase_progress else 0
+                
+                # Count RAG status
+                red_count = sum(1 for v in phase_progress if v < rag["red"])
+                amber_count = sum(1 for v in phase_progress if rag["red"] <= v < rag["amber"])
+                green_count = sum(1 for v in phase_progress if v >= rag["amber"])
+                
+                # Force status card with indicator of independent assessment
+                st.markdown(f"""
+                <div style="background: {color}; color: white; padding: 16px; border-radius: 10px; margin-bottom: 10px; border: 2px solid #fbbf24;">
+                    <h4 style="margin: 0; color: white;">{get_force_emoji(side)} {side.capitalize()}</h4>
+                    <h2 style="margin: 5px 0; color: white;">{avg_progress:.1f}%</h2>
+                    <p style="margin: 0; color: white; opacity: 0.9;">Phase Progress</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # RAG status breakdown
+                st.markdown("**Force's Assessment:**")
+                if green_count > 0:
+                    st.markdown(f" {green_count} Good Progress")
+                if amber_count > 0:
+                    st.markdown(f" {amber_count} Moderate Progress") 
+                if red_count > 0:
+                    st.markdown(f" {red_count} Low Progress")
+        
+        # Phase Comparison Section
+        st.markdown("---")
+        st.subheader("🔍 Control vs Force Phase Assessment Comparison")
+        st.markdown("*Compare Control's master data with Force's independent Phase assessments*")
+        
+        cols = st.columns(min(len(SIDES), 2))  # Max 2 columns for better comparison view
+        
+        for idx, side in enumerate(SIDES):
+            # Load Control's master data
+            control_data = load_project(project, side)
+            control_progress = compute_progress(control_data)
+            
+            # Load Force's independent assessment
+            force_data = load_independent_project(project, side)
+            if not force_data:
+                force_data = load_project(project, side)
+            force_progress = compute_progress(force_data)
+            
+            with cols[idx % len(cols)]:
+                # Calculate Control's Phase average
+                if control_progress.get("phase"):
+                    control_phase_avg = sum(control_progress["phase"].values()) / len(control_progress["phase"].values())
+                else:
+                    control_phase_avg = 0
+                
+                # Calculate Force's Phase average
+                if force_progress.get("phase"):
+                    force_phase_avg = sum(force_progress["phase"].values()) / len(force_progress["phase"].values())
+                else:
+                    force_phase_avg = 0
+                
+                # Comparison indicator
+                diff = force_phase_avg - control_phase_avg
+                if abs(diff) <= 1:
+                    status_color = "#10b981"
+                    status_text = "🔄 Aligned"
+                elif diff > 1:
+                    status_color = "#f59e0b"
+                    status_text = "📈 Force Higher"
+                else:
+                    status_color = "#ef4444"
+                    status_text = "📉 Force Lower"
+                
+                st.markdown(f"""
+                <div style="background: {status_color}20; border: 1px solid {status_color}40; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                    <h5 style="margin: 0; color: {status_color};">{get_force_emoji(side)} {side.capitalize()}</h5>
+                    <p style="margin: 2px 0; font-size: 0.9rem;">Control View: {control_phase_avg:.1f}%</p>
+                    <p style="margin: 2px 0; font-size: 0.9rem;">Force Assessment: {force_phase_avg:.1f}%</p>
+                    <p style="margin: 2px 0; font-weight: bold; color: {status_color};">{status_text}</p>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    # Objective Progress Tab - Force Independent View
+    with obj_tab:
+        st.subheader("🎖️ Forces' Objective Assessment Summary")
+        st.markdown("*Objective progress as assessed by each force*")
+        
+        # Force status cards for Objectives (using independent data)
+        cols = st.columns(min(len(SIDES), 4))  # Max 4 columns
+        
+        for idx, side in enumerate(SIDES):
+            # Load independent force data (what forces are reporting)
+            independent_data = load_independent_project(project, side)
+            if not independent_data:
+                independent_data = load_project(project, side)  # Fallback to base data
+            
+            progress = compute_progress(independent_data)
+            
+            with cols[idx % len(cols)]:
+                color = FORCE_COLORS.get(side, "#8b5cf6")
+                
+                # Calculate Objective summary from force's independent assessment
+                obj_progress = list(progress["objective"].values()) if progress["objective"] else [0]
+                avg_progress = sum(obj_progress) / len(obj_progress) if obj_progress else 0
+                
+                # Count RAG status
+                red_count = sum(1 for v in obj_progress if v < rag["red"])
+                amber_count = sum(1 for v in obj_progress if rag["red"] <= v < rag["amber"])
+                green_count = sum(1 for v in obj_progress if v >= rag["amber"])
+                
+                # Force status card with indicator of independent assessment
+                st.markdown(f"""
+                <div style="background: {color}; color: white; padding: 16px; border-radius: 10px; margin-bottom: 10px; border: 2px solid #fbbf24;">
+                    <h4 style="margin: 0; color: white;">{get_force_emoji(side)} {side.capitalize()}</h4>
+                    <h2 style="margin: 5px 0; color: white;">{avg_progress:.1f}%</h2>
+                    <p style="margin: 0; color: white; opacity: 0.9;">Objective Progress</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # RAG status breakdown
+                st.markdown("**Force's Assessment:**")
+                if green_count > 0:
+                    st.markdown(f" {green_count} Good Progress")
+                if amber_count > 0:
+                    st.markdown(f" {amber_count} Moderate Progress") 
+                if red_count > 0:
+                    st.markdown(f" {red_count} Low Progress")
+        
+        # Objective Comparison Section
+        st.markdown("---")
+        st.subheader("🔍 Control vs Force Objective Assessment Comparison")
+        st.markdown("*Compare Control's master data with Force's independent Objective assessments*")
+        
+        # Force comparison cards for Objectives
+        cols = st.columns(min(len(SIDES), 2))  # Max 2 columns for better comparison view
+        
+        for idx, side in enumerate(SIDES):
+            # Load Control's master data
+            control_data = load_project(project, side)
+            control_progress = compute_progress(control_data)
+            
+            # Load Force's independent assessment
+            force_data = load_independent_project(project, side)
+            if not force_data:
+                force_data = load_project(project, side)  # Fallback to base data
+            force_progress = compute_progress(force_data)
+            
+            with cols[idx % len(cols)]:
+                color = FORCE_COLORS.get(side, "#8b5cf6")
+                
+                # Calculate Control's objective average
+                if control_progress.get("objective"):
+                    control_obj_avg = sum(control_progress["objective"].values()) / len(control_progress["objective"].values()) if control_progress.get("objective") else 0
+                else:
+                    control_obj_avg = 0
+                
+                # Calculate Force's objective average
+                if force_progress.get("objective"):
+                    force_obj_avg = sum(force_progress["objective"].values()) / len(force_progress["objective"].values()) if force_progress.get("objective") else 0
+                else:
+                    force_obj_avg = 0
+                
+                # Comparison indicator
+                diff = force_obj_avg - control_obj_avg
+                if abs(diff) <= 1:  # Very strict alignment threshold (within 1%)
+                    status_color = "#10b981"
+                    status_text = "🔄 Aligned"
+                elif diff > 1:
+                    status_color = "#f59e0b"
+                    status_text = "📈 Force Higher"
+                else:
+                    status_color = "#ef4444"
+                    status_text = "📉 Force Lower"
+                
+                st.markdown(f"""
+                <div style="background: {status_color}20; border: 1px solid {status_color}40; border-radius: 8px; padding: 12px; margin-bottom: 10px;">
+                    <h5 style="margin: 0; color: {status_color};">{get_force_emoji(side)} {side.capitalize()}</h5>
+                    <p style="margin: 2px 0; font-size: 0.9rem;">Control View: {control_obj_avg:.1f}%</p>
+                    <p style="margin: 2px 0; font-size: 0.9rem;">Force Assessment: {force_obj_avg:.1f}%</p>
+                    <p style="margin: 2px 0; font-weight: bold; color: {status_color};">{status_text}</p>
+                </div>
+                """, unsafe_allow_html=True)
 
 def show_force_dashboard(side, project, rag, independent=False):
     """Show detailed dashboard for a specific force"""
@@ -3704,6 +4374,8 @@ def main():
         progress_entry_tab()
     elif selected == "Dashboard":
         dashboard_tab()
+    elif selected == "Chat":
+        chat_tab()
     elif selected == "Force Progress Entry":
         force_progress_entry_tab()
     elif selected == "Force Dashboard":

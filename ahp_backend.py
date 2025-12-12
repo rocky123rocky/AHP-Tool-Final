@@ -79,10 +79,15 @@ def archive_project(project_name):
             os.replace(src, dst)
 
 def delete_project(project_name):
-    for side in SIDES:
-        path = get_project_path(project_name, side)
-        if os.path.exists(path):
-            os.remove(path)
+    """Move ALL project files to archive instead of deleting - dismounts from active projects"""
+    # Move all files starting with project_name (handles control, pink, and any other variants)
+    files = os.listdir(PROJECTS_DIR)
+    for f in files:
+        if f.startswith(f"{project_name}_") and f.endswith(".json"):
+            src = os.path.join(PROJECTS_DIR, f)
+            dst = os.path.join(ARCHIVE_DIR, f)
+            if os.path.exists(src):
+                os.replace(src, dst)
 
 def export_project_json(project_name, side):
     data = load_project(project_name, side)
@@ -160,13 +165,16 @@ def import_from_single_sheet(data, df):
     if any(col in df.columns for col in ['DP No'] + dp_description_cols):
         # Build column list dynamically based on what exists
         dp_columns = ['DP No', 'Objective']
+        # If Phase column exists in the combined sheet, include it so DPs carry phase info
+        if 'Phase' in df.columns:
+            dp_columns.append('Phase')
         if dp_desc_col:
             dp_columns.append(dp_desc_col)
         if force_col:
             dp_columns.append(force_col)
         if weight_col:
             dp_columns.append(weight_col)
-            
+
         dp_data = df[dp_columns].drop_duplicates()
         data['dps'] = []
         for _, row in dp_data.iterrows():
@@ -178,6 +186,9 @@ def import_from_single_sheet(data, df):
                     dp_entry['Name'] = str(row[dp_desc_col]).strip()
                 if pd.notna(row.get('Objective')):
                     dp_entry['Objective'] = str(row['Objective']).strip()
+                # If Phase column is present in the sheet, attach it to the DP entry
+                if 'Phase' in row.index and pd.notna(row.get('Phase')):
+                    dp_entry['Phase'] = str(row['Phase']).strip()
                 if force_col and pd.notna(row.get(force_col)):
                     dp_entry['Force Group'] = str(row[force_col]).strip()
                 if weight_col and pd.notna(row.get(weight_col)):
@@ -354,6 +365,12 @@ def import_excel_to_project(project_name, side, excel_path):
                             standardized_data.append(obj_data)
                     
                     data[key] = standardized_data
+                # If objectives are available, ensure each DP has its Phase populated
+                if data.get('objectives'):
+                    obj_phase_map = {obj.get('Name'): obj.get('Phase', '') for obj in data.get('objectives', [])}
+                    for dp in data.get('dps', []):
+                        if not dp.get('Phase') and dp.get('Objective'):
+                            dp['Phase'] = obj_phase_map.get(dp.get('Objective'), '')
                 
                 elif key == "tasks":
                     # Common task column name variations (including user's specific format)
@@ -588,7 +605,9 @@ def compute_progress(data):
     dp_progress = {}
     for dp in data.get("dps", []):
         dp_no = dp.get("DP No")
-        tasks = [t for t in data.get("tasks", []) if t.get("DP No") == dp_no]
+        dp_no_str = str(dp_no).strip() if dp_no is not None else None
+        # Normalize DP No comparison to string to avoid int/str mismatches
+        tasks = [t for t in data.get("tasks", []) if str(t.get("DP No", "")).strip() == dp_no_str]
         if not tasks:
             dp_progress[dp_no] = 0
             continue
@@ -606,7 +625,8 @@ def compute_progress(data):
     obj_progress = {}
     for obj in data.get("objectives", []):
         obj_name = obj.get("Name")
-        dps = [dp for dp in data.get("dps", []) if dp.get("Objective") == obj_name]
+        obj_name_str = str(obj_name).strip() if obj_name is not None else None
+        dps = [dp for dp in data.get("dps", []) if str(dp.get("Objective", "")).strip() == obj_name_str]
         if not dps:
             obj_progress[obj_name] = 0
             continue
@@ -616,7 +636,8 @@ def compute_progress(data):
     phase_progress = {}
     for phase in data.get("phases", []):
         phase_name = phase.get("Name")
-        objs = [obj for obj in data.get("objectives", []) if obj.get("Phase") == phase_name]
+        phase_name_str = str(phase_name).strip() if phase_name is not None else None
+        objs = [obj for obj in data.get("objectives", []) if str(obj.get("Phase", "")).strip() == phase_name_str]
         if not objs:
             phase_progress[phase_name] = 0
             continue
@@ -627,3 +648,17 @@ def compute_progress(data):
         "objective": obj_progress,
         "phase": phase_progress
     }
+
+def get_progress_range(intangible_type):
+    """
+    Return (min_progress, max_progress, default_progress) based on Intangible type.
+    Intangible type can be: "nil", "partial", "complete"
+    """
+    intangible_type = str(intangible_type).lower().strip()
+    
+    if intangible_type == "partial":
+        return (33, 66, 33)
+    elif intangible_type == "complete":
+        return (66, 100, 66)
+    else:  # "nil" or any other default
+        return (0, 33, 0)

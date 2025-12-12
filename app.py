@@ -1242,7 +1242,7 @@ def objectives_tab():
                 
                 # Manage objectives
                 st.markdown("---")
-                col_add, col_delete = st.columns(2)
+                col_add, col_edit, col_delete = st.columns(3)
                 
                 with col_add:
                     st.markdown("**➕ Add New Objective**")
@@ -1264,6 +1264,36 @@ def objectives_tab():
                         save_project(project, force, data)
                         st.success(f"✅ Objective '{new_name}' added to {force} force")
                         st.rerun()
+                
+                with col_edit:
+                    st.markdown("**✏️ Edit Objective**")
+                    if objectives:
+                        sorted_objectives = sort_objectives_numerically(objectives)
+                        obj_to_original_idx = {id(obj): objectives.index(obj) for obj in objectives}
+                        obj_options = [f"{obj.get('Objective No', i+1)}. {obj.get('Name', 'Unnamed')}" for i, obj in enumerate(sorted_objectives)]
+                        selected_sorted_idx = st.selectbox("Select Objective to Edit", range(len(sorted_objectives)), 
+                                                       format_func=lambda x: obj_options[x], key=f"edit_obj_sel_{force}")
+                        selected_obj = sorted_objectives[selected_sorted_idx]
+                        selected_obj_idx = obj_to_original_idx[id(selected_obj)]
+                        current_obj = objectives[selected_obj_idx]
+                        
+                        edit_obj_name = st.text_input("Objective Name", value=current_obj.get("Name", ""), key=f"edit_obj_name_{force}")
+                        phases = [p.get("Name") for p in data.get("phases", [])]
+                        if phases:
+                            current_phase_idx = phases.index(current_obj.get("Phase")) if current_obj.get("Phase") in phases else 0
+                            edit_phase = st.selectbox("Phase", phases, index=current_phase_idx, key=f"edit_obj_phase_{force}")
+                        else:
+                            edit_phase = current_obj.get("Phase", "")
+                        
+                        if st.button("💾 Save Changes", type="primary", key=f"save_edit_obj_{force}"):
+                            objectives[selected_obj_idx]["Name"] = edit_obj_name
+                            objectives[selected_obj_idx]["Phase"] = edit_phase
+                            data["objectives"] = objectives
+                            save_project(project, force, data)
+                            st.success("✅ Objective updated")
+                            st.rerun()
+                    else:
+                        st.info("No objectives to edit")
                 
                 with col_delete:
                     st.markdown("**🗑️ Delete Objective**")
@@ -1312,7 +1342,7 @@ def objectives_tab():
         
         # Manage objectives
         st.markdown("---")
-        col_add, col_delete = st.columns(2)
+        col_add, col_edit, col_delete = st.columns(3)
         
         with col_add:
             st.markdown("**➕ Add New Objective**")
@@ -1334,6 +1364,32 @@ def objectives_tab():
                 save_project(project, side, data)
                 st.success(f"✅ Objective '{name}' added")
                 st.rerun()
+        
+        with col_edit:
+            st.markdown("**✏️ Edit Objective**")
+            if objectives:
+                obj_options = [f"{i+1}. {obj.get('Name', 'Unnamed')}" for i, obj in enumerate(objectives)]
+                selected_obj_idx = st.selectbox("Select Objective to Edit", range(len(objectives)), 
+                                               format_func=lambda x: obj_options[x], key="edit_obj_sel_single")
+                current_obj = objectives[selected_obj_idx]
+                
+                edit_obj_name = st.text_input("Objective Name", value=current_obj.get("Name", ""), key="edit_obj_name_single")
+                phases = [p.get("Name") for p in data.get("phases", [])]
+                if phases:
+                    current_phase_idx = phases.index(current_obj.get("Phase")) if current_obj.get("Phase") in phases else 0
+                    edit_phase = st.selectbox("Phase", phases, index=current_phase_idx, key="edit_obj_phase_single")
+                else:
+                    edit_phase = current_obj.get("Phase", "")
+                
+                if st.button("💾 Save Changes", type="primary", key="save_edit_obj_single"):
+                    objectives[selected_obj_idx]["Name"] = edit_obj_name
+                    objectives[selected_obj_idx]["Phase"] = edit_phase
+                    data["objectives"] = objectives
+                    save_project(project, side, data)
+                    st.success("✅ Objective updated")
+                    st.rerun()
+            else:
+                st.info("No objectives to edit")
         
         with col_delete:
             st.markdown("**🗑️ Delete Objective**")
@@ -1384,7 +1440,7 @@ def phases_tab():
                 
                 # Manage phases
                 st.markdown("---")
-                col_add, col_delete = st.columns(2)
+                col_add, col_edit, col_delete = st.columns(3)
                 
                 with col_add:
                     st.markdown("**➕ Add New Phase**")
@@ -1399,6 +1455,29 @@ def phases_tab():
                         save_project(project, force, data)
                         st.success(f"✅ Phase '{new_name}' added to {force} force")
                         st.rerun()
+                
+                with col_edit:
+                    st.markdown("**✏️ Edit Phase**")
+                    if phases:
+                        sorted_phases = sort_phases_numerically(phases)
+                        phase_to_original_idx = {id(phase): phases.index(phase) for phase in phases}
+                        phase_options = [f"{phase.get('Phase No', i+1)}. {phase.get('Name', 'Unnamed')}" for i, phase in enumerate(sorted_phases)]
+                        selected_sorted_idx = st.selectbox("Select Phase to Edit", range(len(sorted_phases)), 
+                                                         format_func=lambda x: phase_options[x], key=f"edit_phase_sel_{force}")
+                        selected_phase = sorted_phases[selected_sorted_idx]
+                        selected_phase_idx = phase_to_original_idx[id(selected_phase)]
+                        current_phase = phases[selected_phase_idx]
+                        
+                        edit_phase_name = st.text_input("Phase Name", value=current_phase.get("Name", ""), key=f"edit_phase_name_{force}")
+                        
+                        if st.button(f"💾 Save Changes", type="primary", key=f"save_edit_phase_{force}"):
+                            phases[selected_phase_idx]["Name"] = edit_phase_name
+                            data["phases"] = phases
+                            save_project(project, force, data)
+                            st.success("✅ Phase updated")
+                            st.rerun()
+                    else:
+                        st.info("No phases to edit")
                 
                 with col_delete:
                     st.markdown("**🗑️ Delete Phase**")
@@ -1440,7 +1519,7 @@ def phases_tab():
         
         # Manage phases
         st.markdown("---")
-        col_add, col_delete = st.columns(2)
+        col_add, col_edit, col_delete = st.columns(3)
         
         with col_add:
             st.markdown("**➕ Add New Phase**")
@@ -1455,6 +1534,24 @@ def phases_tab():
                 save_project(project, side, data)
                 st.success(f"✅ Phase '{name}' added")
                 st.rerun()
+        
+        with col_edit:
+            st.markdown("**✏️ Edit Phase**")
+            if phases:
+                phase_options = [f"{i+1}. {phase.get('Name', 'Unnamed')}" for i, phase in enumerate(phases)]
+                selected_phase_idx = st.selectbox("Select Phase to Edit", range(len(phases)), 
+                                                 format_func=lambda x: phase_options[x], key="edit_phase_sel_single")
+                current_phase = phases[selected_phase_idx]
+                edit_phase_name = st.text_input("Phase Name", value=current_phase.get("Name", ""), key="edit_phase_name_single")
+                
+                if st.button("💾 Save Changes", type="primary", key="save_edit_phase_single"):
+                    phases[selected_phase_idx]["Name"] = edit_phase_name
+                    data["phases"] = phases
+                    save_project(project, side, data)
+                    st.success("✅ Phase updated")
+                    st.rerun()
+            else:
+                st.info("No phases to edit")
         
         with col_delete:
             st.markdown("**🗑️ Delete Phase**")
@@ -1499,20 +1596,20 @@ def dps_tab():
                         dp_data.append({
                             "DP No": dp.get("DP No", ""),
                             "DP Name": dp.get("Name", ""),
+                            "DP weightage": dp.get("Weight", ""),
                             "Objective": dp.get("Objective", ""),
                             "Phase": dp.get("Phase", ""),
-                            "Weight": dp.get("Weight", ""),
                             "Force Group": dp.get("Force Group", "")
                         })
                     df = pd.DataFrame(dp_data)
                 else:
-                    df = pd.DataFrame(columns=["DP No", "DP Name", "Objective", "Phase", "Weight", "Force Group"])
+                    df = pd.DataFrame(columns=["DP No", "DP Name", "DP weightage", "Objective", "Phase", "Force Group"])
                 
                 display_force_table(df, use_container_width=True, force_type=force)
                 
                 # Manage DPs
                 st.markdown("---")
-                col_add, col_delete = st.columns(2)
+                col_add, col_edit, col_delete = st.columns(3)
                 
                 with col_add:
                     st.markdown("**➕ Add New DP**")
@@ -1566,6 +1663,50 @@ def dps_tab():
                         st.success(f"✅ DP '{new_dp_name}' added to {force} force")
                         st.rerun()
                 
+                with col_edit:
+                    st.markdown("**✏️ Edit DP**")
+                    if dps:
+                        sorted_dps = sorted(enumerate(dps), key=lambda x: int(x[1].get('DP No', 0)) if str(x[1].get('DP No', '')).isdigit() else float('inf'))
+                        dp_options = [f"DP {dps[original_idx].get('DP No', 'N/A')}: {dps[original_idx].get('Name', 'Unnamed')}" for original_idx, dp in sorted_dps]
+                        sorted_indices = [original_idx for original_idx, dp in sorted_dps]
+                        
+                        selected_sorted_idx = st.selectbox("Select DP to Edit", range(len(sorted_dps)), 
+                                                      format_func=lambda x: dp_options[x], key=f"edit_dp_sel_{force}")
+                        selected_dp_idx = sorted_indices[selected_sorted_idx]
+                        current_dp = dps[selected_dp_idx]
+                        
+                        edit_dp_name = st.text_input("DP Name", value=current_dp.get("Name", ""), key=f"edit_dp_name_{force}")
+                        
+                        obj_names = [obj.get("Name") for obj in objectives if obj.get("Name")]
+                        if obj_names:
+                            current_obj_idx = obj_names.index(current_dp.get("Objective")) if current_dp.get("Objective") in obj_names else 0
+                            edit_objective = st.selectbox("Objective", obj_names, index=current_obj_idx, key=f"edit_dp_obj_{force}")
+                        else:
+                            edit_objective = current_dp.get("Objective", "")
+                        
+                        phase_names = [phase.get("Name") for phase in phases if phase.get("Name")]
+                        if phase_names and current_dp.get("Phase") in phase_names:
+                            current_phase_idx = phase_names.index(current_dp.get("Phase"))
+                            edit_phase = st.selectbox("Phase", phase_names, index=current_phase_idx, key=f"edit_dp_phase_{force}")
+                        else:
+                            edit_phase = st.text_input("Phase", value=current_dp.get("Phase", ""), key=f"edit_dp_phase_manual_{force}")
+                        
+                        edit_weight = st.slider("Weight", 1, 5, int(float(str(current_dp.get("Weight", 3)))), key=f"edit_dp_weight_{force}")
+                        edit_force_group = st.text_input("Force Group", value=current_dp.get("Force Group", ""), key=f"edit_dp_fg_{force}")
+                        
+                        if st.button(f"💾 Save Changes", type="primary", key=f"save_edit_dp_{force}"):
+                            dps[selected_dp_idx]["Name"] = edit_dp_name
+                            dps[selected_dp_idx]["Objective"] = edit_objective
+                            dps[selected_dp_idx]["Phase"] = edit_phase
+                            dps[selected_dp_idx]["Weight"] = edit_weight
+                            dps[selected_dp_idx]["Force Group"] = edit_force_group
+                            data["dps"] = dps
+                            save_project(project, force, data)
+                            st.success(f"✅ DP updated")
+                            st.rerun()
+                    else:
+                        st.info("No DPs to edit")
+                
                 with col_delete:
                     st.markdown("**🗑️ Delete DP**")
                     if dps:
@@ -1609,20 +1750,20 @@ def dps_tab():
                 dp_data.append({
                     "DP No": dp.get("DP No", ""),
                     "DP Name": dp.get("Name", ""),
+                    "DP weightage": dp.get("Weight", ""),
                     "Objective": dp.get("Objective", ""),
                     "Phase": dp.get("Phase", ""),
-                    "Weight": dp.get("Weight", ""),
                     "Force Group": dp.get("Force Group", "")
                 })
             df = pd.DataFrame(dp_data)
         else:
-            df = pd.DataFrame(columns=["DP No", "DP Name", "Objective", "Phase", "Weight", "Force Group"])
+            df = pd.DataFrame(columns=["DP No", "DP Name", "DP weightage", "Objective", "Phase", "Force Group"])
         
         display_force_table(df, use_container_width=True)
         
         # Manage DPs
         st.markdown("---")
-        col_add, col_delete = st.columns(2)
+        col_add, col_edit, col_delete = st.columns(3)
         
         with col_add:
             st.markdown("**➕ Add New DP**")
@@ -1675,6 +1816,50 @@ def dps_tab():
                 save_project(project, side, data)
                 st.success(f"✅ DP '{dp_name}' added")
                 st.rerun()
+        
+        with col_edit:
+            st.markdown("**✏️ Edit DP**")
+            if dps:
+                sorted_dps = sorted(enumerate(dps), key=lambda x: int(x[1].get('DP No', 0)) if str(x[1].get('DP No', '')).isdigit() else float('inf'))
+                dp_options = [f"DP {dps[original_idx].get('DP No', 'N/A')}: {dps[original_idx].get('Name', 'Unnamed')}" for original_idx, dp in sorted_dps]
+                sorted_indices = [original_idx for original_idx, dp in sorted_dps]
+                
+                selected_sorted_idx = st.selectbox("Select DP to Edit", range(len(sorted_dps)), 
+                                              format_func=lambda x: dp_options[x], key="edit_dp_sel_single")
+                selected_dp_idx = sorted_indices[selected_sorted_idx]
+                current_dp = dps[selected_dp_idx]
+                
+                edit_dp_name = st.text_input("DP Name", value=current_dp.get("Name", ""), key="edit_dp_name_single")
+                
+                obj_names = [obj.get("Name") for obj in objectives if obj.get("Name")]
+                if obj_names:
+                    current_obj_idx = obj_names.index(current_dp.get("Objective")) if current_dp.get("Objective") in obj_names else 0
+                    edit_objective = st.selectbox("Objective", obj_names, index=current_obj_idx, key="edit_dp_obj_single")
+                else:
+                    edit_objective = current_dp.get("Objective", "")
+                
+                phase_names = [phase.get("Name") for phase in phases if phase.get("Name")]
+                if phase_names and current_dp.get("Phase") in phase_names:
+                    current_phase_idx = phase_names.index(current_dp.get("Phase"))
+                    edit_phase = st.selectbox("Phase", phase_names, index=current_phase_idx, key="edit_dp_phase_single")
+                else:
+                    edit_phase = st.text_input("Phase", value=current_dp.get("Phase", ""), key="edit_dp_phase_manual_single")
+                
+                edit_weight = st.slider("Weight", 1, 5, int(float(str(current_dp.get("Weight", 3)))), key="edit_dp_weight_single")
+                edit_force_group = st.text_input("Force Group", value=current_dp.get("Force Group", ""), key="edit_dp_fg_single")
+                
+                if st.button("💾 Save Changes", type="primary", key="save_edit_dp_single"):
+                    dps[selected_dp_idx]["Name"] = edit_dp_name
+                    dps[selected_dp_idx]["Objective"] = edit_objective
+                    dps[selected_dp_idx]["Phase"] = edit_phase
+                    dps[selected_dp_idx]["Weight"] = edit_weight
+                    dps[selected_dp_idx]["Force Group"] = edit_force_group
+                    data["dps"] = dps
+                    save_project(project, side, data)
+                    st.success("✅ DP updated")
+                    st.rerun()
+            else:
+                st.info("No DPs to edit")
         
         with col_delete:
             st.markdown("**🗑️ Delete DP**")
@@ -2635,29 +2820,42 @@ def show_force_progress_entry(project, force, independent=False):
             
             # Progress input with slider and number input (synchronized)
             st.markdown("**Progress Achieved (%)**")
+            
+            # Get progress range based on current Intangible selection
+            # Use session state value if available (reflects the current selection in UI)
+            current_intangible = st.session_state.get(f"intangible_{unique_key}", task.get("Intangible", "nil"))
+            min_progress, max_progress, default_progress = get_progress_range(current_intangible)
+
+            # Ensure the stored progress value respects the current range
+            current_progress_val = st.session_state.get(f"progress_val_{unique_key}", default_progress)
+            # Clamp to range
+            clamped_progress = max(min_progress, min(current_progress_val, max_progress))
+            # Initialize session state if it was out of range
+            st.session_state[f"progress_val_{unique_key}"] = clamped_progress
+            
             progress_col1, progress_col2 = st.columns([3, 1])
             with progress_col1:
                 new_progress = st.slider(
                     "Progress Slider", 
-                    0, 
-                    100, 
-                    st.session_state[f"progress_val_{unique_key}"],
+                    min_progress, 
+                    max_progress, 
+                    clamped_progress,
                     step=1,
                     key=f"progress_slider_{unique_key}",
                     label_visibility="collapsed",
-                    help="Actual completion percentage"
+                    help=f"Adjust progress within range {min_progress}–{max_progress}% based on task type (Nil: 0–33%, Partial: 33–66%, Complete: 66–100%)"
                 )
                     
             with progress_col2:
                 progress_input = st.number_input(
                     "Progress Value",
-                    min_value=0,
-                    max_value=100,
+                    min_value=min_progress,
+                    max_value=max_progress,
                     value=new_progress,
                     step=1,
                     key=f"progress_input_{unique_key}",
                     label_visibility="collapsed",
-                    help="Enter exact value"
+                    help=f"Enter value in range {min_progress}–{max_progress}%"
                 )
             
             # Update session state value
@@ -2677,13 +2875,18 @@ def show_force_progress_entry(project, force, independent=False):
             )
             
             # Additional intangible assessment
-            intangible = st.selectbox(
-                "Intangible Assessment",
-                ["nil", "partial", "complete"],
-                index=["nil", "partial", "complete"].index(task.get("Intangible", "nil")),
-                key=f"intangible_{unique_key}",
-                help="Qualitative assessment beyond measurable progress"
-            )
+            task_type_for_intangible = str(task.get('Type', 'T')).upper()
+            if task_type_for_intangible == 'T':
+                # Tangible tasks: force intangible to nil and hide options
+                intangible = 'nil'
+            else:
+                intangible = st.selectbox(
+                    "Intangible Assessment",
+                    ["nil", "partial", "complete"],
+                    index=["nil", "partial", "complete"].index(task.get("Intangible", "nil")),
+                    key=f"intangible_{unique_key}",
+                    help="Qualitative assessment beyond measurable progress"
+                )
             
             # AUTO-SAVE: Check if values have changed from saved values
             saved_weight = int(round(float(str(task.get("Weight", task.get("weight", 0))).replace('%', ''))))
@@ -2707,7 +2910,11 @@ def show_force_progress_entry(project, force, independent=False):
                 tasks[original_idx]["Achieved %"] = new_progress
                 tasks[original_idx]["Progress %"] = new_progress
                 
-                tasks[original_idx]["Intangible"] = intangible
+                # Force intangible to nil for tangible tasks
+                if task_type_for_intangible == 'T':
+                    tasks[original_idx]["Intangible"] = 'nil'
+                else:
+                    tasks[original_idx]["Intangible"] = intangible
                 
                 # Save progress comment
                 tasks[original_idx]["Progress Comment"] = progress_comment

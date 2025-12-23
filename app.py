@@ -7,7 +7,26 @@ import json
 from datetime import datetime
 from ahp_backend import *
 
-st.set_page_config(page_title="COPP AHP Military Planner", layout="wide")
+st.set_page_config(
+    page_title="COPP AHP Military Planner", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Hide Streamlit default elements with CSS immediately after page config
+st.markdown("""
+<style>
+/* Hide the Deploy button, hamburger menu, and header */
+#MainMenu {visibility: hidden;}
+header {visibility: hidden;}
+footer {visibility: hidden;}
+.stDeployButton {display: none;}
+button[kind="header"] {display: none;}
+[data-testid="stToolbar"] {display: none;}
+.css-14xtw13.e8zbici0 {display: none;}
+section[data-testid="stSidebar"] > div:first-child {padding-top: 0rem;}
+</style>
+""", unsafe_allow_html=True)
 
 FORCES_FILE = "forces.json"
 AHP_TEAM_FILE = "ahp_team.json"
@@ -516,6 +535,21 @@ body {{
     height: 100vh;
     max-height: 100vh;
 }}
+/* Hide the Deploy button and main menu */
+#MainMenu {{visibility: hidden !important;}}
+header {{visibility: hidden !important;}}
+footer {{visibility: hidden !important;}}
+.stDeployButton {{display: none !important;}}
+button[kind="header"] {{display: none !important;}}
+[data-testid="stToolbar"] {{display: none !important;}}
+.viewerBadge_container__1QSob {{display: none !important;}}
+.styles_viewerBadge__1yB5_ {{display: none !important;}}
+.viewerBadge_link__1S137 {{display: none !important;}}
+.viewerBadge_text__1JaDK {{display: none !important;}}
+header[data-testid="stHeader"] {{display: none !important;}}
+div[data-testid="stToolbar"] {{display: none !important;}}
+div[data-testid="stDecoration"] {{display: none !important;}}
+div[data-testid="stStatusWidget"] {{display: none !important;}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -1182,26 +1216,6 @@ def project_management():
             st.table(sort_dps_numerically(data.get("dps", [])))
             st.write("Tasks:")
             st.table(data.get("tasks", []))
-    # Removed stray/incorrectly indented lines from summary display loop
-    role = st.session_state.get("role")
-    project = st.session_state.get("project")
-    if role in ["control"] + SIDES:
-        name = st.text_input("Phase Name")
-        if st.button("Add Phase") and name:
-            # Add to all forces if control, else just current side
-            if role == "control":
-                for force in SIDES:
-                    data = load_project(project, force)
-                    data["phases"].append({"Name": name})
-                    save_project(project, force, data)
-                st.success(f"Phase '{name}' added to all forces.")
-            else:
-                side = role
-                data = load_project(project, side)
-                data["phases"].append({"Name": name})
-                save_project(project, side, data)
-                st.success(f"Phase '{name}' added.")
-            st.rerun()
 
 # --- Objectives Tab ---
 def objectives_tab():
@@ -2762,11 +2776,34 @@ def show_force_progress_entry(project, force, independent=False):
         # Progress update controls
         unique_key = f"progress_{force}_{selected_dp_no}_{original_idx}"
         
+        # Check for sync flags from previous render and update widget states BEFORE creating widgets
+        if f"sync_weight_{unique_key}" in st.session_state:
+            sync_val = st.session_state[f"sync_weight_{unique_key}"]
+            st.session_state[f"weight_slider_{unique_key}"] = sync_val
+            st.session_state[f"weight_input_{unique_key}"] = sync_val
+            del st.session_state[f"sync_weight_{unique_key}"]
+        
+        if f"sync_progress_{unique_key}" in st.session_state:
+            sync_val = st.session_state[f"sync_progress_{unique_key}"]
+            st.session_state[f"progress_slider_{unique_key}"] = sync_val
+            st.session_state[f"progress_input_{unique_key}"] = sync_val
+            del st.session_state[f"sync_progress_{unique_key}"]
+        
         # Initialize session state for synchronized inputs if not exists
         if f"weight_val_{unique_key}" not in st.session_state:
             st.session_state[f"weight_val_{unique_key}"] = int(round(current_weight))
         if f"progress_val_{unique_key}" not in st.session_state:
             st.session_state[f"progress_val_{unique_key}"] = int(round(current_progress))
+        
+        # Always sync from saved values on first load to ensure consistency
+        saved_weight_val = int(round(float(str(task.get("Weight", task.get("weight", 0))).replace('%', ''))))
+        saved_progress_val = int(round(float(str(task.get("Progress", task.get("progress", 0))).replace('%', ''))))
+        
+        # Update session state if it doesn't match saved value (e.g., after page reload)
+        if f"synced_{unique_key}" not in st.session_state:
+            st.session_state[f"weight_val_{unique_key}"] = saved_weight_val
+            st.session_state[f"progress_val_{unique_key}"] = saved_progress_val
+            st.session_state[f"synced_{unique_key}"] = True
         
         # Get live progress value from session state
         live_progress = st.session_state[f"progress_val_{unique_key}"]
@@ -2788,14 +2825,20 @@ def show_force_progress_entry(project, force, independent=False):
             
             # Weight input with slider and number input (synchronized)
             st.markdown("**Task Weight (%)**")
+            
+            # Initialize widget keys if not present
+            if f"weight_slider_{unique_key}" not in st.session_state:
+                st.session_state[f"weight_slider_{unique_key}"] = st.session_state[f"weight_val_{unique_key}"]
+            if f"weight_input_{unique_key}" not in st.session_state:
+                st.session_state[f"weight_input_{unique_key}"] = st.session_state[f"weight_val_{unique_key}"]
+            
             weight_col1, weight_col2 = st.columns([3, 1])
+            
             with weight_col1:
-                new_weight = st.slider(
+                weight_slider = st.slider(
                     "Weight Slider", 
                     0, 
                     100, 
-                    st.session_state[f"weight_val_{unique_key}"],
-                    step=1,
                     key=f"weight_slider_{unique_key}",
                     label_visibility="collapsed",
                     help="Strategic importance of this task (doesn't need to sum to 100% - relative proportions matter)"
@@ -2806,44 +2849,53 @@ def show_force_progress_entry(project, force, independent=False):
                     "Weight Value",
                     min_value=0,
                     max_value=100,
-                    value=new_weight,
-                    step=1,
                     key=f"weight_input_{unique_key}",
                     label_visibility="collapsed",
                     help="Enter exact value"
                 )
             
-            # Update session state value
-            if weight_input != new_weight:
-                new_weight = weight_input
-            st.session_state[f"weight_val_{unique_key}"] = new_weight
+            # Get values and detect changes
+            new_weight = weight_slider if weight_slider == weight_input else (weight_slider if weight_slider != st.session_state[f"weight_val_{unique_key}"] else weight_input)
+            
+            # If they differ, set sync flag for next render
+            if weight_slider != weight_input:
+                st.session_state[f"sync_weight_{unique_key}"] = new_weight
+                st.session_state[f"weight_val_{unique_key}"] = new_weight
+                st.rerun()
+            else:
+                st.session_state[f"weight_val_{unique_key}"] = new_weight
             
             # Progress input with slider and number input (synchronized)
             st.markdown("**Progress Achieved (%)**")
             
-            # Get progress range based on current Intangible selection
-            # Use session state value if available (reflects the current selection in UI)
-            current_intangible = st.session_state.get(f"intangible_{unique_key}", task.get("Intangible", "nil"))
-            min_progress, max_progress, default_progress = get_progress_range(current_intangible)
+            # Get progress range based on task type
+            task_type_check = str(task.get('Type', 'T')).upper()
+            if task_type_check == 'T':
+                # Tangible tasks: full range 0-100%
+                min_progress, max_progress, default_progress = 0, 100, 0
+            else:
+                # Intangible tasks: range based on intangible assessment
+                current_intangible = st.session_state.get(f"intangible_{unique_key}", task.get("Intangible", "nil"))
+                min_progress, max_progress, default_progress = get_progress_range(current_intangible)
 
-            # Ensure the stored progress value respects the current range
-            current_progress_val = st.session_state.get(f"progress_val_{unique_key}", default_progress)
-            # Clamp to range
+            # Initialize widget keys if not present, ensure they're within range
+            current_progress_val = st.session_state[f"progress_val_{unique_key}"]
             clamped_progress = max(min_progress, min(current_progress_val, max_progress))
-            # Initialize session state if it was out of range
-            st.session_state[f"progress_val_{unique_key}"] = clamped_progress
+            
+            if f"progress_slider_{unique_key}" not in st.session_state:
+                st.session_state[f"progress_slider_{unique_key}"] = clamped_progress
+            if f"progress_input_{unique_key}" not in st.session_state:
+                st.session_state[f"progress_input_{unique_key}"] = clamped_progress
             
             progress_col1, progress_col2 = st.columns([3, 1])
             with progress_col1:
-                new_progress = st.slider(
+                progress_slider = st.slider(
                     "Progress Slider", 
                     min_progress, 
-                    max_progress, 
-                    clamped_progress,
-                    step=1,
+                    max_progress,
                     key=f"progress_slider_{unique_key}",
                     label_visibility="collapsed",
-                    help=f"Adjust progress within range {min_progress}–{max_progress}% based on task type (Nil: 0–33%, Partial: 33–66%, Complete: 66–100%)"
+                    help=f"Adjust progress within range {min_progress}–{max_progress}% (Tangible: 0–100%, Intangible Nil: 0–33%, Partial: 34–66%, Complete: 67–100%)"
                 )
                     
             with progress_col2:
@@ -2851,17 +2903,21 @@ def show_force_progress_entry(project, force, independent=False):
                     "Progress Value",
                     min_value=min_progress,
                     max_value=max_progress,
-                    value=new_progress,
-                    step=1,
                     key=f"progress_input_{unique_key}",
                     label_visibility="collapsed",
                     help=f"Enter value in range {min_progress}–{max_progress}%"
                 )
             
-            # Update session state value
-            if progress_input != new_progress:
-                new_progress = progress_input
-            st.session_state[f"progress_val_{unique_key}"] = new_progress
+            # Get values and detect changes
+            new_progress = progress_slider if progress_slider == progress_input else (progress_slider if progress_slider != st.session_state[f"progress_val_{unique_key}"] else progress_input)
+            
+            # If they differ, set sync flag for next render
+            if progress_slider != progress_input:
+                st.session_state[f"sync_progress_{unique_key}"] = new_progress
+                st.session_state[f"progress_val_{unique_key}"] = new_progress
+                st.rerun()
+            else:
+                st.session_state[f"progress_val_{unique_key}"] = new_progress
             
             # Progress comment/notes
             current_comment = task.get("Progress Comment", task.get("progress_comment", ""))

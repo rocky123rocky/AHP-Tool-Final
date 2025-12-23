@@ -657,8 +657,8 @@ def get_progress_range(intangible_type):
     intangible_type = str(intangible_type).lower().strip()
     
     if intangible_type == "partial":
-        return (33, 66, 33)
+        return (34, 66, 34)
     elif intangible_type == "complete":
-        return (66, 100, 66)
+        return (67, 100, 67)
     else:  # "nil" or any other default
         return (0, 33, 0)
